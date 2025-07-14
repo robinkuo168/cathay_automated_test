@@ -1,0 +1,20 @@
+# IBM Watsonx.ai Configuration
+WATSONX_API_KEY=JxsGnk03edo6N6XN0mCYkkb-Mf6ACOn608JCYR0eNCZe
+WATSONX_PROJECT_ID=01c9dc60-0b88-4b26-ba1e-624820af527b
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+MODEL_ID=meta-llama/llama-4-maverick-17b-128e-instruct-fp8
+# API 配置 (可選，有預設值)
+API_HOST=0.0.0.0
+API_PORT=8000
+LOG_LEVEL=INFO
+DEBUG=false
+# 檔案配置 (可選，有預設值)
+UPLOAD_DIR=uploads
+MAX_FILE_SIZE=10485760
+# 應用程式配置 (可選，有預設值)
+APP_NAME=JMX Generator API
+APP_VERSION=1.0.0
+# 生成資料筆數限制
+MAX_SYNC_ROWS = 300
+DES3_KEY=cathay_actual_secure_key
+DES3_IV=23456789

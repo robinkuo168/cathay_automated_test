@@ -1,0 +1,150 @@
+<!-- syn-data-gen.html -->
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API 規格分析工具</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- ... (header, nav, status-bar, upload-section 保持不變) ... -->
+        <header>
+            <h1>📋 測試資料生成工具</h1>
+            <p>輕鬆分析規格文件並生成測試資料</p>
+        </header>
+
+        <nav class="main-nav">
+            <a href="syn-data-gen.html" class="nav-btn active">
+                <span class="btn-icon">📋</span> 測試資料生成工具
+            </a>
+            <a href="jmx-generator.html" class="nav-btn">
+                <span class="btn-icon">🚀</span> JMX 生成工具
+            </a>
+            <a href="report-analyzer.html" class="nav-btn">
+                <span class="btn-icon">📊</span> 壓測報告分析工具
+            </a>
+        </nav>
+
+        <div class="status-bar" id="statusBar">
+            <span id="status">就緒</span>
+        </div>
+
+        <section class="upload-section">
+            <h2>📁 上傳規格檔案</h2>
+            <div class="file-upload-area" id="uploadZone">
+                <input type="file" id="fileInput" accept=".docx" style="display: none;">
+                <div class="file-label" id="uploadLabel">
+                    <span class="upload-icon">📤</span>
+                    <span class="upload-text">選擇檔案或拖拽到此處</span>
+                    <span class="upload-hint">支援 DOCX 格式</span>
+                </div>
+            </div>
+
+            <!-- 檔案列表顯示區域 -->
+            <div id="fileList" class="file-list" style="display: none;">
+                <h4>已選擇的檔案：</h4>
+                <div id="selectedFiles">
+                    <!-- 選中的檔案將顯示在這裡 -->
+                </div>
+            </div>
+
+            <div class="upload-controls">
+                <button id="uploadBtn" class="btn btn-primary" disabled>
+                    <span class="btn-icon">⬆️</span>
+                    上傳並處理
+                </button>
+                <button id="clearFilesBtn" class="btn btn-outline" disabled>
+                    <span class="btn-icon">🗑️</span>
+                    清除檔案
+                </button>
+                <button class="btn btn-primary" id="generateMarkdownBtn" disabled style="display: none;">
+                    <span class="btn-icon">✨</span>
+                    分析規格
+                </button>
+            </div>
+        </section>
+
+        <!-- 【核心修改】重新設計規格分析結果區塊 -->
+        <section id="spec-analysis-section" style="display: none;">
+            <h2>📊 確認或校對規格</h2>
+
+            <!-- Header JSON 區塊 -->
+            <div class="editor-group">
+                <h3>API Body (JSON 規格)</h3>
+                <div class="textarea-container">
+                    <textarea id="headerJson"></textarea>
+                </div>
+            </div>
+
+            <!-- Body Markdown 區塊 -->
+            <div class="editor-group">
+                <h3>API Body (Markdown 規格)</h3>
+                <div class="textarea-container">
+                    <textarea id="markdownTable"></textarea>
+                </div>
+            </div>
+
+            <!-- 回饋與操作按鈕 -->
+            <div class="feedback-container">
+                <label for="userFeedback">回饋或修改建議 (可選)</label>
+
+                <!-- 【新增】Radio Button 選擇要校對的目標 -->
+                <div class="review-target-selector">
+                    <input type="radio" id="reviewTargetBody" name="reviewTarget" value="body" checked>
+                    <label for="reviewTargetBody">Body (Markdown)</label>
+
+                    <input type="radio" id="reviewTargetHeader" name="reviewTarget" value="header">
+                    <label for="reviewTargetHeader">Header (JSON)</label>
+                </div>
+
+                <textarea id="userFeedback" placeholder="若自動生成的規格有誤，請在此輸入修改建議..." rows="4"></textarea>
+            </div>
+            <div class="action-buttons markdown-actions">
+                <!-- 【修改】按鈕文字和 ID -->
+                <button class="btn btn-primary" id="reviewSpecBtn" disabled>校對規格</button>
+                <button class="btn btn-success" id="confirmMarkdownBtn" disabled>確認並生成合成資料</button>
+                <button class="btn btn-outline" id="downloadHeaderBtn" disabled>下載 Header (JSON)</button>
+            </div>
+        </section>
+
+        <!-- 合成資料區塊  -->
+        <section id="synthetic-section" style="display: none;">
+            <h2>✅ 生成與校對合成資料</h2>
+            <div class="textarea-container">
+                <textarea id="syntheticData"></textarea>
+            </div>
+
+            <!-- 合成資料校對回饋區塊 -->
+            <div class="feedback-container synthetic-feedback">
+                <label for="syntheticFeedback">合成資料修改建議 (可選)</label>
+                <textarea id="syntheticFeedback" placeholder="請在此輸入對上方資料的修改建議..." rows="4"></textarea>
+            </div>
+
+            <!-- 操作按鈕區塊 -->
+            <div class="action-buttons">
+                <button class="btn btn-primary" id="reviewSyntheticBtn" disabled>校對合成資料</button>
+                <button class="btn btn-outline" id="downloadSyntheticBtn" disabled>下載合成資料 (CSV)</button>
+            </div>
+        </section>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/markdown/markdown.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+    
+    <!-- 通知元件 -->
+    <div id="notification" class="notification-toast" style="display: none;">
+        <span class="notification-icon"></span>
+        <span class="notification-message"></span>
+        <button class="notification-close" onclick="hideNotification()">×</button>
+    </div>
+    
+    <script src="syn-data-gen.js"></script>
+</body>
+</html>

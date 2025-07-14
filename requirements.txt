@@ -1,0 +1,26 @@
+streamlit==1.46.0
+pandas==2.1.4
+ibm-watsonx-ai==1.1.24
+ibm-cloud-sdk-core==3.24.2
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+pydantic==2.10.2
+pydantic-settings==2.6.1
+python-multipart==0.0.17
+python-dotenv==1.0.1
+pandas==2.1.4
+numpy==1.26.4
+structlog==25.4.0
+httpx==0.28.1
+streamlit-option-menu==0.4.0
+requests==2.32.4
+httpx==0.28.1
+# 圖表和視覺化
+plotly==6.1.2
+matplotlib==3.9.2
+openpyxl==3.1.5
+xlrd==2.0.1
+python-docx==1.1.2
+regex==2024.11.6
+Markdown==3.7
+docx2python==3.5.0

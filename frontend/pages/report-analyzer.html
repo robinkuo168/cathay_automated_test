@@ -1,0 +1,138 @@
+<!-- frontend/report-analyzer.html -->
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>效能報告分析 - Performance Report Analyzer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 壓測報告分析工具</h1>
+            <p>智能分析效能測試報告，提供專業建議</p>
+        </header>
+
+        <!-- 導覽區塊 -->
+        <nav class="main-nav">
+            <a href="syn-data-gen.html" class="nav-btn">
+                <span class="btn-icon">📋</span>
+                測試資料生成工具
+            </a>
+            <a href="jmx-generator.html" class="nav-btn">
+                <span class="btn-icon">🚀</span>
+                JMX 生成工具
+            </a>
+            <a href="report-analyzer.html" class="nav-btn active">
+                <span class="btn-icon">📊</span>
+                壓測報告分析工具
+            </a>
+        </nav>
+
+        <main>
+            <!-- 檔案上傳區塊 -->
+            <section class="upload-section">
+                <h2>📄 上傳效能測試報告</h2>
+
+                <!-- 檔案上傳區域 -->
+                <div class="file-upload-area" id="reportUploadZone">
+                    <!-- 隱藏的檔案輸入框 -->
+                    <input type="file" id="reportFileInput" accept=".docx,.doc" style="display: none;">
+
+                    <!-- 點擊區域 -->
+                    <div class="file-label" id="uploadLabel">
+                        <span class="upload-icon">📋</span>
+                        <span class="upload-text">選擇檔案或拖拽到此處</span>
+                        <span class="upload-hint">支援 Word 格式 (.docx, .doc)</span>
+                    </div>
+                </div>
+
+                <!-- 檔案列表顯示區域 -->
+                <div id="fileList" class="file-list" style="display: none;">
+                    <h4>已選擇的檔案：</h4>
+                    <div id="selectedFiles">
+                        <!-- 選中的檔案將顯示在這裡 -->
+                    </div>
+                </div>
+
+                <!-- 上傳控制按鈕 -->
+                <div class="upload-controls">
+                    <button id="uploadBtn" class="btn btn-primary" onclick="uploadFile()" disabled>
+                        <span class="btn-icon">⬆️</span>
+                        上傳檔案
+                    </button>
+                    <button id="clearFilesBtn" class="btn btn-outline" onclick="clearSelectedFiles()">
+                        <span class="btn-icon">🗑️</span>
+                        清除選擇
+                    </button>
+                </div>
+
+                <!-- 上傳狀態顯示 -->
+                <div id="uploadStatus" class="upload-status" style="display: none;">
+                    <h4>上傳狀態</h4>
+                    <div id="uploadProgress">
+                        <!-- 上傳進度將顯示在這裡 -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 分析選項區塊 -->
+            <section class="analysis-section">
+                <h2>🔍 分析選項</h2>
+                <div class="analysis-options">
+                    <div class="option-card">
+                        <div class="card-icon">👁️</div>
+                        <h3>快速預覽</h3>
+                        <p>查看分析摘要，不生成完整報告</p>
+                        <button id="previewBtn" class="btn btn-secondary" onclick="previewAnalysis()" disabled>
+                            <span class="btn-icon">👁️</span>
+                            開始預覽
+                        </button>
+                    </div>
+
+                    <div class="option-card">
+                        <div class="card-icon">📋</div>
+                        <h3>完整分析</h3>
+                        <p>生成詳細的 Word 分析報告</p>
+                        <button id="generateBtn" class="btn btn-primary" onclick="generateAnalysisReport()" disabled>
+                            <span class="btn-icon">📋</span>
+                            生成報告
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 預覽結果區域 -->
+            <section id="previewSection" class="result-section" style="display: none;">
+                <h2>📊 分析預覽</h2>
+                <div id="previewContent" class="preview-content">
+                    <!-- 預覽內容將動態插入 -->
+                </div>
+            </section>
+        </main>
+
+        <!-- 載入指示器 -->
+        <div id="loading" class="loading-indicator" style="display: none;">
+            <div class="spinner"></div>
+            <p id="loadingText">處理中，請稍候...</p>
+        </div>
+
+        <!-- 狀態列 -->
+        <div id="statusBar" class="status-bar">
+            <span id="statusText">就緒</span>
+        </div>
+    </div>
+
+    <!-- 通知彈窗 -->
+    <div id="notification" class="notification-toast" style="display: none;">
+        <div class="notification-content">
+            <span class="notification-icon"></span>
+            <span class="notification-message"></span>
+            <button class="notification-close" onclick="hideNotification()">✕</button>
+        </div>
+    </div>
+
+    <script src="report-analyzer.js"></script>
+</body>
+</html>
