@@ -40,8 +40,11 @@ class LLMService:
             config = self._get_config()
             self._validate_config(config)
 
+            # 確保 model_id 是小寫
+            model_id = config["model_id"].lower()
+            
             self.model = ModelInference(
-                model_id=config["model_id"],
+                model_id=model_id,
                 params={
                     GenParams.DECODING_METHOD: "greedy",
                     GenParams.MAX_NEW_TOKENS: config.get("max_tokens", 4000),
@@ -63,11 +66,14 @@ class LLMService:
 
     def _get_config(self) -> Dict:
         """獲取合併後的配置"""
+        # 獲取環境變數並將 model_id 轉換為小寫
+        model_id = os.getenv("MODEL_ID", "meta-llama/llama-4-maverick-17b-128e-instruct-fp8").lower()
+        
         default_config = {
             "url": os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
             "api_key": os.getenv("WATSONX_API_KEY"),
             "project_id": os.getenv("WATSONX_PROJECT_ID"),
-            "model_id": os.getenv("MODEL_ID", "meta-llama/llama-3-3-70b-instruct"),
+            "model_id": model_id,
             "max_tokens": 4000,
             "temperature": 0.1,
             "top_p": 1.0,
