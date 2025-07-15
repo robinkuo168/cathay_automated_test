@@ -11,6 +11,9 @@ from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
 from ibm_watsonx_ai.credentials import Credentials
 from dotenv import load_dotenv
 import xml.etree.ElementTree as ET
+from xml.dom import minidom
+import xml.sax.saxutils as saxutils
+from dataclasses import asdict
 from .logger import get_logger
 from .llm_service import LLMService
 import io
@@ -59,7 +62,7 @@ class JMXGeneratorService:
         self._model_name = model_name
         self.logger = get_logger(__name__)
         self.jmx_templates = self._load_jmx_templates()
-        
+
     @property
     def llm_service(self) -> LLMService:
         if self._llm_service is None:
@@ -74,81 +77,163 @@ class JMXGeneratorService:
         return self._llm_service
 
     def _load_jmx_templates(self) -> Dict:
-        """載入 JMX 模板 - 修正 HTTP Request 格式"""
+        """
+        【⭐ 最終修正版】載入所有必要的、結構正確的 JMX 組件模板。
+        - 修正了 Thread Group 模板以處理變數嵌套問題。
+        - 斷言模板保持彈性。
+        """
         return {
             "xml_header": '<?xml version="1.0" encoding="UTF-8"?>',
-            # ... 其他模板 ...
-
-            "http_request_with_body": """<HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="{name}" enabled="true">
-      <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
-      <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
-        <collectionProp name="Arguments.arguments">
-          <elementProp name="" elementType="HTTPArgument">
-            <boolProp name="HTTPArgument.always_encode">false</boolProp>
-            <stringProp name="Argument.value">{body_data}</stringProp>
-            <stringProp name="Argument.metadata">=</stringProp>
+            "test_plan_structure": """<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.4.1">
+      <hashTree>
+        <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="{test_name}" enabled="true">
+          <stringProp name="TestPlan.comments">{comments}</stringProp>
+          <boolProp name="TestPlan.functional_mode">false</boolProp>
+          <boolProp name="TestPlan.tearDown_on_shutdown">{tear_down_on_shutdown}</boolProp>
+          <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+          <elementProp name="TestPlan.user_define_classpath" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" enabled="true">
+            <collectionProp name="Arguments.arguments"/>
           </elementProp>
-        </collectionProp>
-      </elementProp>
-      <stringProp name="HTTPSampler.protocol">{protocol}</stringProp>
-      <stringProp name="HTTPSampler.domain">{domain}</stringProp>
-      <stringProp name="HTTPSampler.port">{port}</stringProp>
-      <stringProp name="HTTPSampler.path">{path}</stringProp>
-      <stringProp name="HTTPSampler.method">{method}</stringProp>
-      <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
-      <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
-      <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
-      <boolProp name="HTTPSampler.save_response_data">false</boolProp>
-      <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
-    </HTTPSamplerProxy>
-    <hashTree/>"""
+        </TestPlan>
+        <hashTree>
+          {content}
+        </hashTree>
+      </hashTree>
+    </jmeterTestPlan>""",
+            "http_defaults": """<ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.domain">{domain}</stringProp>
+            <stringProp name="HTTPSampler.port">{port}</stringProp>
+            <stringProp name="HTTPSampler.protocol">{protocol}</stringProp>
+            <stringProp name="HTTPSampler.contentEncoding">{content_encoding}</stringProp>
+            <stringProp name="HTTPSampler.path"></stringProp>
+            <stringProp name="HTTPSampler.concurrentPool">6</stringProp>
+          </ConfigTestElement>
+          <hashTree/>""",
+            "header_manager": """<HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              {headers}
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>""",
+            "header_element": """<elementProp name="" elementType="Header">
+                <stringProp name="Header.name">{name}</stringProp>
+                <stringProp name="Header.value">{value}</stringProp>
+              </elementProp>""",
+            # ⭐【關鍵修正】模板自身負責添加 ${__P(...)} 結構。注意雙大括號 {{}} 用於轉義。
+            "thread_group": """<ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="{name}" enabled="true">
+            <stringProp name="ThreadGroup.on_sample_error">{on_sample_error}</stringProp>
+            <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" enabled="true">
+              <boolProp name="LoopController.continue_forever">false</boolProp>
+              <stringProp name="LoopController.loops">${{{{__P(loop,{loops})}}}}</stringProp>
+            </elementProp>
+            <stringProp name="ThreadGroup.num_threads">${{{{__P(threads,{num_threads})}}}}</stringProp>
+            <stringProp name="ThreadGroup.ramp_time">${{{{__P(rampUp,{ramp_time})}}}}</stringProp>
+            <boolProp name="ThreadGroup.scheduler">{scheduler}</boolProp>
+            <stringProp name="ThreadGroup.duration">${{{{__P(duration,{duration})}}}}</stringProp>
+            <stringProp name="ThreadGroup.delay"></stringProp>
+            <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+          </ThreadGroup>
+          <hashTree>
+            {content}
+          </hashTree>""",
+            "http_request_with_body": """<HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="{name}" enabled="true">
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{body_data}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+              <stringProp name="HTTPSampler.path">{path}</stringProp>
+              <stringProp name="HTTPSampler.method">{method}</stringProp>
+              <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+              <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+            </HTTPSamplerProxy>""",
+            "csv_data_set_config": """<CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="CSV Data Set Config" enabled="true">
+                <stringProp name="delimiter">{delimiter}</stringProp>
+                <stringProp name="fileEncoding">UTF-8</stringProp>
+                <stringProp name="filename">{filename}</stringProp>
+                <boolProp name="ignoreFirstLine">{ignore_first_line}</boolProp>
+                <boolProp name="quotedData">{allow_quoted_data}</boolProp>
+                <boolProp name="recycle">{recycle}</boolProp>
+                <stringProp name="shareMode">{share_mode}</stringProp>
+                <boolProp name="stopThread">{stop_thread}</boolProp>
+                <stringProp name="variableNames">{variable_names}</stringProp>
+              </CSVDataSet>
+              <hashTree/>""",
+            "response_assertion": """<ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="{name}" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+                  {patterns_to_test}
+                </collectionProp>
+                <stringProp name="Assertion.custom_message"></stringProp>
+                <stringProp name="Assertion.test_field">{test_field}</stringProp>
+                <boolProp name="Assertion.assume_success">false</boolProp>
+                <intProp name="Assertion.test_type">{test_type}</intProp>
+              </ResponseAssertion>""",
+            "assertion_pattern": """<stringProp name="{hash_code}">{pattern}</stringProp>"""
         }
 
     def _create_jmx_from_template(self, test_name: str, comments: str = "", content: str = "") -> str:
         """從模板創建完整的 JMX 內容"""
         return (
-            self.jmx_templates["xml_header"] + "\n" +
-            self.jmx_templates["test_plan_structure"].format(
-                test_name=test_name,
-                comments=comments,
-                content=content
+                self.jmx_templates["xml_header"] + "\n" +
+                self.jmx_templates["test_plan_structure"].format(
+                    test_name=test_name,
+                    comments=comments,
+                    content=content
                 )
-            )
+        )
 
     def generate_jmx_with_retry(self, requirements: str, files_data: List[Dict] = None, max_retries: int = 3) -> str:
         """
-        生成 JMX 檔案（帶重試機制）
+        【重構】生成 JMX 檔案（採用新流程）
         """
         try:
             context = self._prepare_generation_context(requirements, files_data)
             self.logger.info(f"✅ 生成上下文準備完成，測試計畫: '{context.test_plan_name}'")
         except ValueError as e:
-            self.logger.error(f"❌ 輸入資料準備失敗，無法繼續生成: {e}")
-            return self._get_fallback_jmx(requirements, self._safe_process_files(files_data))
+            self.logger.error(f"❌ 輸入資料準備失敗: {e}")
+            # Fallback logic can be simplified or removed if this flow is stable
+            raise e
 
         validation_errors = []
         for attempt in range(max_retries):
             try:
-                self.logger.info(f"🚀 開始第 {attempt + 1}/{max_retries} 次生成嘗試...")
-                prompt = self._build_prompt(context, attempt, validation_errors)
-                response = self.llm_service.generate_text(prompt=prompt)
-                jmx_content = self._extract_and_clean_jmx(response, context)
+                self.logger.info(f"🚀 開始第 {attempt + 1}/{max_retries} 次內容生成嘗試...")
 
+                # 1. 建立新的提示詞，要求 LLM 返回 JSON
+                prompt = self._build_content_generation_prompt(context, attempt, validation_errors)
+
+                # 2. 呼叫 LLM
+                response = self.llm_service.generate_text(prompt=prompt)
+
+                # 3. 解析 LLM 返回的 JSON
+                test_plan_data = self._parse_llm_content_response(response)
+
+                # 4. 【核心變更】呼叫新的組裝器，而不是清理器
+                jmx_content = self._assemble_jmx_from_structured_data(test_plan_data, context)
+
+                # 5. 驗證（現在這一步應該總是通過）
                 is_valid, message = self.validate_xml(jmx_content)
                 if not is_valid:
-                    validation_errors.append(f"XML格式錯誤: {message}")
-                    self.logger.warning(f"第 {attempt + 1} 次嘗試 - XML 驗證失敗: {message}")
+                    validation_errors.append(f"組裝後的 JMX 結構無效: {message}")
+                    self.logger.warning(f"第 {attempt + 1} 次嘗試 - JMX 組裝驗證失敗: {message}")
                     continue
 
-                content_valid, content_message = self._validate_jmx_content_requirements(jmx_content, context)
-                if not content_valid:
-                    validation_errors.append(f"內容不符需求: {content_message}")
-                    self.logger.warning(f"第 {attempt + 1} 次嘗試 - 內容驗證失敗: {content_message}")
-                    continue
-
-                self.logger.info(f"✅ 第 {attempt + 1} 次生成成功！")
+                self.logger.info(f"✅ 第 {attempt + 1} 次生成與組裝成功！")
                 return jmx_content
 
+            except (json.JSONDecodeError, ValueError) as e:
+                self.logger.error(f"第 {attempt + 1} 次嘗試 - 解析 LLM 回應失敗: {e}", exc_info=True)
+                validation_errors.append(f"LLM 回應的 JSON 格式錯誤: {str(e)}")
             except Exception as e:
                 self.logger.error(f"第 {attempt + 1} 次生成過程中發生異常: {e}", exc_info=True)
                 validation_errors.append(f"執行異常: {str(e)}")
@@ -156,11 +241,186 @@ class JMXGeneratorService:
         self.logger.error("所有重試均告失敗。")
         raise Exception("無法生成有效的 JMX 檔案，已達最大重試次數。")
 
+    def generate_jmx_with_retry(self, requirements: str, files_data: List[Dict] = None, max_retries: int = 3) -> str:
+        """
+        生成 JMX 檔案（採用新流程）
+        """
+        try:
+            context = self._prepare_generation_context(requirements, files_data)
+            self.logger.info(f"✅ 生成上下文準備完成，測試計畫: '{context.test_plan_name}'")
+        except ValueError as e:
+            self.logger.error(f"❌ 輸入資料準備失敗: {e}")
+            raise e
+
+        validation_errors = []
+        for attempt in range(max_retries):
+            try:
+                self.logger.info(f"🚀 開始第 {attempt + 1}/{max_retries} 次內容生成嘗試...")
+                prompt = self._build_content_generation_prompt(context, attempt, validation_errors)
+                response = self.llm_service.generate_text(prompt=prompt)
+                test_plan_data = self._parse_llm_content_response(response)
+                jmx_content = self._assemble_jmx_from_structured_data(test_plan_data, context)
+                is_valid, message = self.validate_xml(jmx_content)
+                if not is_valid:
+                    validation_errors.append(f"組裝後的 JMX 結構無效: {message}")
+                    self.logger.warning(f"第 {attempt + 1} 次嘗試 - JMX 組裝驗證失敗: {message}")
+                    continue
+
+                self.logger.info(f"✅ 第 {attempt + 1} 次生成與組裝成功！")
+                return jmx_content
+
+            except (json.JSONDecodeError, ValueError) as e:
+                self.logger.error(f"第 {attempt + 1} 次嘗試 - 解析 LLM 回應失敗: {e}", exc_info=True)
+                validation_errors.append(f"LLM 回應的 JSON 格式錯誤: {str(e)}")
+            except Exception as e:
+                self.logger.error(f"第 {attempt + 1} 次生成過程中發生異常: {e}", exc_info=True)
+                validation_errors.append(f"執行異常: {str(e)}")
+
+        self.logger.error("所有重試均告失敗。")
+        raise Exception("無法生成有效的 JMX 檔案，已達最大重試次數。")
+
+    def _build_content_generation_prompt(self, context: GenerationContext, attempt: int,
+                                         validation_errors: List[str]) -> str:
+        """
+        【⭐ 修正版】建立提示詞，要求 LLM 填充一個結構化的 JSON。
+        - 要求 LLM 只返回數值，而不是完整的變數字串。
+        """
+        self.logger.info(f"=== 步驟 2 (新流程): 建立內容生成提示詞 (第 {attempt + 1} 次嘗試) ===")
+
+        json_template = {
+            "test_plan_name": context.test_plan_name,
+            "tear_down_on_shutdown": "FILL_IN_BOOLEAN (true or false)",
+            "global_headers": [{"name": "FILL_IN_HEADER_NAME", "value": "FILL_IN_HEADER_VALUE"}],
+            "http_defaults": {"domain": "FILL_IN_DOMAIN", "protocol": "FILL_IN_PROTOCOL", "content_encoding": "UTF-8"},
+            "thread_groups": []
+        }
+
+        for tg_context in context.thread_groups:
+            tg_data = {
+                "name": tg_context.name,
+                "on_sample_error": "FILL_IN_STRING (e.g., continue)",
+                # ⭐【關鍵修正】要求 LLM 只填寫數值
+                "num_threads": "FILL_IN_INTEGER_VALUE (e.g., 3)",
+                "ramp_time": "FILL_IN_INTEGER_VALUE (e.g., 1)",
+                "loops": "FILL_IN_INTEGER_VALUE (e.g., -1 for infinite)",
+                "scheduler": "FILL_IN_BOOLEAN (true or false)",
+                "duration": "FILL_IN_INTEGER_VALUE (e.g., 10)",
+                "csv_data_configs": [],
+                "http_requests": []
+            }
+
+            # 為 CSV 新增模板
+            if tg_context.csv_configs:
+                for csv_info in tg_context.csv_configs:
+                    tg_data["csv_data_configs"].append({
+                        "filename": csv_info.filename,
+                        "variable_names": ",".join(csv_info.variable_names),
+                        "delimiter": "FILL_IN_STRING (e.g., ,)",
+                        "ignore_first_line": "FILL_IN_BOOLEAN (true or false)"
+                    })
+
+            # 為 HTTP Request 新增模板
+            if tg_context.http_requests:
+                for req_info in tg_context.http_requests:
+                    req_data = {
+                        "name": req_info.name,
+                        "path": "FILL_IN_PATH",
+                        "method": "FILL_IN_METHOD (e.g., POST)",
+                        "body": req_info.json_body,  # Body 已由 context 提供
+                        "assertions": [{
+                            "name": "FILL_IN_ASSERTION_NAME",
+                            "test_field": "FILL_IN (e.g., response_data)",
+                            "test_type": "FILL_IN_INTEGER (e.g., 2 for Contains)",
+                            "patterns": ["FILL_IN_PATTERN_TO_MATCH"]
+                        }]
+                    }
+                    tg_data["http_requests"].append(req_data)
+
+            json_template["thread_groups"].append(tg_data)
+
+        context_as_json_string = json.dumps(asdict(context), indent=2, ensure_ascii=False)
+
+        prompt = f"""You are a specialized AI assistant that maps structured data into a detailed JSON format.
+
+        === YOUR TASK ===
+        Analyze the provided "STRUCTURED DATA TO USE" and use it to meticulously fill in all "FILL_IN_..." placeholders in the "JSON STRUCTURE TO FILL".
+
+        === STRUCTURED DATA TO USE (from initial analysis) ===
+        {context_as_json_string}
+
+        === JSON STRUCTURE TO FILL ===
+        Carefully fill in all placeholders in the following JSON object.
+        - For `num_threads`, `ramp_time`, `loops`, `duration`, you MUST provide only the integer value (e.g., 3, 1, -1, 10).
+        - If a feature like CSV or Global Headers is not mentioned, represent it as an empty list `[]` or an empty object `{{}}`. Do not use `null`.
+        - The 'body' field for http_requests is pre-filled. Focus on filling other fields.
+
+        {json.dumps(json_template, indent=2, ensure_ascii=False)}
+
+        === 🔥 FINAL, NON-NEGOTIABLE INSTRUCTIONS 🔥 ===
+        1. Your ONLY purpose is to return a valid, complete JSON object.
+        2. Your entire response MUST BE a single JSON object, starting with `{{` and ending with `}}`.
+        3. DO NOT include any explanations, comments, or markdown code blocks like ```json.
+        """
+
+        if attempt > 0 and validation_errors:
+            error_summary = "; ".join(list(set(validation_errors))[-3:])
+            retry_prompt = f"""
+            🚨 RETRY ATTEMPT #{attempt + 1}. YOUR PREVIOUS RESPONSE FAILED.
+            🚨 REASON: {error_summary}
+            🚨 YOU MUST FIX THIS. Review all instructions and provide a PURE, VALID JSON response.
+            """
+            prompt += retry_prompt
+
+        return prompt
+
+    def _parse_llm_content_response(self, response: str) -> Dict:
+        """
+        【⭐ 修正版 v2】解析 LLM 返回的 JSON 內容。
+        此版本更健壯，能處理 LLM 回應中包含額外文字、markdown，
+        並能自動修復常見的「單引號」造成的 JSON 格式錯誤。
+        """
+        self.logger.info("--- 步驟 3 (新流程): 解析 LLM 的 JSON 回應 ---")
+
+        # 策略一：優先尋找被 ```json ... ``` 包裹的區塊
+        match = re.search(r"```json\s*(\{.*?\})\s*```", response, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            self.logger.info("✅ 成功從 markdown 區塊中提取 JSON。")
+        else:
+            # 策略二：如果找不到 markdown，則尋找第一個 { 和最後一個 }
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if not match:
+                self.logger.error(f"在 LLM 回應中找不到任何 JSON 物件。回應內容: {response[:500]}...")
+                raise ValueError("在 LLM 回應中找不到有效的 JSON 物件。")
+            json_str = match.group(0)
+            self.logger.info("從原始回應中提取了 JSON 字串，現在嘗試解析...")
+
+        cleaned_json_str = json_str.strip()
+
+        try:
+            # 優先嘗試標準 JSON 解析
+            parsed_data = json.loads(cleaned_json_str)
+            self.logger.info("✅ LLM 的 JSON 回應解析成功！")
+            return parsed_data
+        except json.JSONDecodeError as e:
+            # ⭐【核心修正】如果標準解析失敗，則啟動備用修復邏輯
+            self.logger.warning(f"標準 JSON 解析失敗 ({e})，嘗試自動修復 (例如：單引號問題)...")
+            try:
+                # ast.literal_eval 可以安全地解析 Python 風格的字串（如使用單引號的字典）
+                import ast
+                repaired_data = ast.literal_eval(cleaned_json_str)
+                self.logger.info("✅ 成功使用 ast.literal_eval 修復並解析了回應！")
+                return repaired_data
+            except (ValueError, SyntaxError, MemoryError, TypeError) as ast_e:
+                # 如果連 ast 都無法解析，表示格式問題更嚴重
+                self.logger.error(f"自動修復失敗 ({ast_e})，JSON 字串格式嚴重錯誤。")
+                # 拋出原始的 JSON 錯誤，以便重試邏輯可以捕獲
+                raise e from None
+
     def _prepare_generation_context(self, requirements: str, files_data: List[Dict]) -> GenerationContext:
         """
-        【重構版】
-        預處理函數：將原始輸入轉換為結構化的 GenerationContext。
-        此版本將 JSON 參數化作為核心前置處理步驟。
+        【⭐ 最終修正版】
+        預處理函數：將原始輸入轉換為結構化的 GenerationContext，確保附件與執行緒群組正確綁定。
         """
         self.logger.info("=== 步驟 1: 開始準備生成上下文 (採用健壯參數化流程) ===")
         processed_files = self._safe_process_files(files_data)
@@ -171,74 +431,66 @@ class JMXGeneratorService:
 
         thread_group_contexts = []
 
-        # 從需求分析中獲取所有預期的 HTTP Request 名稱
-        all_http_requests_from_analysis = req_analysis.get('http_requests', [])
+        # 建立已使用檔案的追蹤器，避免檔案被重複分配
+        used_json_files = set()
+        used_csv_files = set()
 
-        # 主迴圈：為每一個 Thread Group 建立上下文
-        for tg_name in req_analysis['thread_groups']:
+        # 按名稱排序以確保匹配的穩定性
+        all_json_files = sorted(req_analysis['json_files'])
+        all_csv_files = sorted(req_analysis['csv_files'])
+
+        for tg_name in sorted(req_analysis['thread_groups']):
             self.logger.info(f"🔄 --- 正在處理 Thread Group: '{tg_name}' ---")
 
-            # 1. 確定相關檔案名稱
-            # 假設 HTTP Request 名稱與 Thread Group 名稱一致
-            http_req_name = next((r for r in all_http_requests_from_analysis if r == tg_name), tg_name)
-            json_filename = f"{http_req_name}.json"
-            csv_filename = f"{tg_name}.csv"
+            # 1. 為當前 Thread Group 尋找最匹配的檔案
+            # 策略：優先尋找檔名包含 Thread Group 名稱的檔案，其次按順序分配未使用的檔案
 
-            # 2. 獲取原始檔案內容
-            json_info = processed_files['json_contents'].get(json_filename)
+            json_filename = next((f for f in all_json_files if tg_name in f and f not in used_json_files), None)
+            if not json_filename:
+                json_filename = next((f for f in all_json_files if f not in used_json_files), None)
+
+            csv_filename = next((f for f in all_csv_files if tg_name in f and f not in used_csv_files), None)
+            if not csv_filename:
+                csv_filename = next((f for f in all_csv_files if f not in used_csv_files), None)
+
+            if json_filename: used_json_files.add(json_filename)
+            if csv_filename: used_csv_files.add(csv_filename)
+
+            http_req_name = next((r for r in req_analysis['http_requests'] if r == tg_name), tg_name)
+            self.logger.info(f"為 '{tg_name}' 匹配到的檔案 -> JSON: '{json_filename}', CSV: '{csv_filename}'")
+
+            # 2. 獲取檔案內容
+            json_info = processed_files['json_contents'].get(json_filename) if json_filename else None
             original_json_body = json_info.get('raw_content') if json_info else None
-
-            # 使用更安全的方式尋找 CSV 設定
             csv_config_data = next(
-                (c for c in processed_files.get('csv_configs', []) if c.get('filename') == csv_filename), None)
+                (c for c in processed_files.get('csv_configs', []) if c.get('filename') == csv_filename),
+                None) if csv_filename else None
 
-            # 3. 【核心邏輯】執行參數化並準備最終資料
-            final_json_body = original_json_body
-            csv_info_obj = None
-            is_parameterized = False
-
+            # 3. 執行參數化
+            final_json_body, csv_info_obj, is_parameterized = original_json_body, None, False
             if original_json_body and csv_config_data:
-                self.logger.info(f"為 '{tg_name}' 找到匹配的 JSON ('{json_filename}') 和 CSV ('{csv_filename}')。")
-
-                # 建立 CsvInfo 物件以傳遞給參數化函式
+                self.logger.info(f"✅ 為 '{tg_name}' 找到匹配的 JSON/CSV，開始參數化。")
                 csv_info_obj = CsvInfo(
                     filename=csv_filename,
                     variable_names=csv_config_data.get('variable_names', []),
                     total_rows=csv_config_data.get('total_rows', 0),
                     raw_content=csv_config_data.get('raw_content')
                 )
-
-                # 🚀 呼叫我們新的、健壯的參數化函式
                 final_json_body = self._parameterize_json_body(original_json_body, csv_info_obj)
-                is_parameterized = True  # 標記已執行參數化流程
-
+                is_parameterized = True
             else:
-                self.logger.warning(f"⚠️  為 '{tg_name}' 未能找到完整的 JSON/CSV 配對，將跳過參數化。")
-                if not original_json_body:
-                    self.logger.warning(f"   - 缺少 JSON 檔案: '{json_filename}'")
-                if not csv_config_data:
-                    self.logger.warning(f"   - 缺少 CSV 檔案: '{csv_filename}'")
+                self.logger.warning(f"⚠️ 為 '{tg_name}' 未能找到完整的 JSON/CSV 配對，將跳過參數化。")
 
             # 4. 建立結構化物件
-            # 使用【最終】的 JSON body (可能是原始的，也可能是參數化後的)
-            http_req_info = HttpRequestInfo(
-                name=http_req_name,
-                json_body=final_json_body,
-                source_json_filename=json_filename if json_info else None,
-                is_parameterized=is_parameterized
-            )
-
+            http_req_info = HttpRequestInfo(name=http_req_name, json_body=final_json_body,
+                                            source_json_filename=json_filename, is_parameterized=is_parameterized)
             tg_context = ThreadGroupContext(name=tg_name)
             tg_context.http_requests.append(http_req_info)
-
-            # 只有成功建立 CsvInfo 物件時才將其加入
             if csv_info_obj:
                 tg_context.csv_configs.append(csv_info_obj)
-
             thread_group_contexts.append(tg_context)
             self.logger.info(f"✅ --- Thread Group '{tg_name}' 處理完成 ---")
 
-        # 5. 返回最終的、完整的上下文物件
         return GenerationContext(
             test_plan_name=req_analysis.get('test_plan_name', 'Generated Test Plan'),
             thread_groups=thread_group_contexts,
@@ -331,153 +583,57 @@ class JMXGeneratorService:
             return {"csv_configs": [], "json_contents": {}}
 
     def _analyze_requirements_dynamically(self, requirements: str) -> Dict:
-        """動態分析需求，提取關鍵資訊（通用版本）"""
-        import re
-
+        """
+        【⭐ 最終修正版 v2】動態分析需求，提取關鍵資訊。
+        - 放寬了 Test Plan 名稱的提取規則。
+        """
         analysis = {
             'test_plan_name': '',
             'thread_groups': [],
             'http_requests': [],
-            'csv_configs': [],
-            'response_assertions': [],
-            'view_results_trees': [],
-            'expected_components': 0
+            'json_files': [],
+            'csv_files': []
         }
 
-        try:
-            # 1. 提取測試計畫名稱（多種格式支援）
-            testplan_patterns = [
-                r'測試計畫[^，,\n]*名稱[欄位]*[填入為]*[『「]([^』」]+)[』」]',
-                r'名稱[欄位]*填入[『「]([^』」]+)[』」]',
-                r"Test Plan.*name.*[『「]([^』」]+)[』」]",
-                r"testname.*[『「]([^』」]+)[』」]"
-            ]
+        # ⭐【關鍵修正】使用更寬鬆、更穩健的正則表達式來提取 Test Plan 名稱。
+        # 這可以匹配 "在『測試計畫』中，名稱..." 等更多樣的句式。
+        match = re.search(r'測試計畫.*?名稱.*?[『「]([^』」]+)[』」]', requirements)
+        if match:
+            analysis['test_plan_name'] = match.group(1).strip()
+        else:
+            # 如果找不到，可以設置一個預設值或記錄警告
+            self.logger.warning("在需求文件中未能提取到 '測試計畫名稱'，將使用預設值。")
+            analysis['test_plan_name'] = 'Generated Test Plan'
 
-            for pattern in testplan_patterns:
-                match = re.search(pattern, requirements, re.IGNORECASE)
-                if match:
-                    analysis['test_plan_name'] = match.group(1).strip()
-                    break
+        # 提取所有符合特定模式的名稱
+        potential_names = re.findall(r'\b[A-Z]{2,}[-C][-A-Z0-9]+\b', requirements)
 
-            # 2. 提取 Thread Group 名稱（通用模式）
-            tg_patterns = [
-                # 中文模式
-                r'thread group[^，,\n]*名稱[為分別為]*[『「]*([A-Z0-9_-]+)[』」]*',
-                r'執行緒群組[^，,\n]*名稱[為分別為]*[『「]*([A-Z0-9_-]+)[』」]*',
-                r'增加.*thread group.*名稱為\s*[『「]*([A-Z0-9_-]+)[』」]*',
-                # 處理 "名稱分別為 A 及 B" 的格式
-                r'名稱分別為\s*([A-Z0-9_-]+)\s*及\s*([A-Z0-9_-]+)',
-                r'名稱分別為\s*([A-Z0-9_-]+)[、，]\s*([A-Z0-9_-]+)',
-                # 英文模式
-                r'Thread Group.*name[s]*[:\s]*[『「]*([A-Z0-9_-]+)[』」]*',
-            ]
+        # 分類 Thread Group 和 HTTP Request
+        tg_lines = [line for line in requirements.split('\n') if 'thread group' in line.lower() or '執行緒群組' in line]
+        for line in tg_lines:
+            names_in_line = re.findall(r'\b[A-Z]{2,}[-C][-A-Z0-9]+\b', line)
+            analysis['thread_groups'].extend(names_in_line)
 
-            for pattern in tg_patterns:
-                matches = re.findall(pattern, requirements, re.IGNORECASE)
-                for match in matches:
-                    if isinstance(match, tuple):
-                        # 處理多組匹配（如 "A 及 B"）
-                        for item in match:
-                            if item.strip():
-                                analysis['thread_groups'].append(item.strip())
-                    else:
-                        if match.strip():
-                            analysis['thread_groups'].append(match.strip())
+        http_lines = [line for line in requirements.split('\n') if
+                      'http request' in line.lower() or 'http 請求' in line]
+        for line in http_lines:
+            names_in_line = re.findall(r'\b[A-Z]{2,}[-C][-A-Z0-9]+\b', line)
+            analysis['http_requests'].extend(names_in_line)
 
-            # 3. 提取 HTTP Request 名稱（通用模式）
-            http_patterns = [
-                # 中文模式
-                r'http request[^，,\n]*名稱[為分別為]*\s*[『「]*([A-Z0-9_-]+)[』」]*',
-                r'HTTP請求[^，,\n]*名稱[為分別為]*\s*[『「]*([A-Z0-9_-]+)[』」]*',
-                r'增加.*http request.*名稱為\s*[『「]*([A-Z0-9_-]+)[』」]*',
-                r'底下增加\s*http request[^，,\n]*名稱為\s*([A-Z0-9_-]+)',
-                # 英文模式
-                r'HTTP Request.*name[s]*[:\s]*[『「]*([A-Z0-9_-]+)[』」]*',
-                r'HTTP Sampler.*name[s]*[:\s]*[『「]*([A-Z0-9_-]+)[』」]*',
-            ]
+        # 如果按行分類失敗，則將所有找到的名稱都視為兩者
+        if not analysis['thread_groups']: analysis['thread_groups'] = potential_names
+        if not analysis['http_requests']: analysis['http_requests'] = potential_names
 
-            for pattern in http_patterns:
-                matches = re.findall(pattern, requirements, re.IGNORECASE)
-                for match in matches:
-                    if isinstance(match, tuple):
-                        for item in match:
-                            if item.strip():
-                                analysis['http_requests'].append(item.strip())
-                    else:
-                        if match.strip():
-                            analysis['http_requests'].append(match.strip())
-
-            # 4. 智能推斷：如果 HTTP Request 和 Thread Group 在同一段落，可能同名
-            if len(analysis['http_requests']) < len(analysis['thread_groups']):
-                lines = requirements.split('\n')
-                for i, line in enumerate(lines):
-                    for tg_name in analysis['thread_groups']:
-                        # 檢查是否在相鄰行中提到相同名稱的 http request
-                        context_lines = lines[max(0, i - 2):min(len(lines), i + 3)]
-                        context = ' '.join(context_lines)
-                        if (tg_name in line and 'thread group' in line.lower() and
-                                'http request' in context.lower()):
-                            if tg_name not in analysis['http_requests']:
-                                analysis['http_requests'].append(tg_name)
-
-            # 5. 提取 CSV 配置資訊（通用模式）
-            csv_patterns = [
-                r'CSV.*資料.*設定',
-                r'CSV.*Data.*Set.*Config',
-                r'([A-Z0-9_-]+\.csv)',
-                r'檔名.*填入.*[『「]*([^』」\s]+\.csv)[』」]*',
-                r'附件.*[『「]*([^』」\s]+\.csv)[』」]*',
-            ]
-
-            for pattern in csv_patterns:
-                matches = re.findall(pattern, requirements, re.IGNORECASE)
-                for match in matches:
-                    if match.strip().endswith('.csv'):
-                        analysis['csv_configs'].append(match.strip())
-
-            # 6. 提取 Response Assertion 資訊
-            assertion_patterns = [
-                r'Response Assertion.*[『「]*([^』」\n]+)[』」]*',
-                r'回應.*斷言.*[『「]*([^』」\n]+)[』」]*',
-                r'驗證.*回[覆應].*[『「]*([^』」\n]+)[』」]*',
-            ]
-
-            for pattern in assertion_patterns:
-                matches = re.findall(pattern, requirements, re.IGNORECASE)
-                analysis['response_assertions'].extend([m.strip() for m in matches if m.strip()])
-
-            # 7. 提取 View Results Tree 資訊
-            view_patterns = [
-                r'View Results Tree.*[『「]*([^』」\n]+)[』」]*',
-                r'檢視.*結果.*樹狀.*[『「]*([^』」\n]+)[』」]*',
-                r'結果.*檢視.*[『「]*([^』」\n]+)[』」]*',
-            ]
-
-            for pattern in view_patterns:
-                matches = re.findall(pattern, requirements, re.IGNORECASE)
-                analysis['view_results_trees'].extend([m.strip() for m in matches if m.strip()])
-
-        except Exception as e:
-            self.logger.warning(f"需求分析時發生錯誤: {str(e)}")
-            # 發生錯誤時嘗試備用解析
-            return self._fallback_parse_requirements(requirements)
+        # 提取附件檔名
+        analysis['json_files'] = re.findall(r'([A-Z0-9_-]+\.json)', requirements, re.IGNORECASE)
+        analysis['csv_files'] = re.findall(r'([A-Z0-9_-]+\.csv)', requirements, re.IGNORECASE)
 
         # 清理和去重
-        analysis['thread_groups'] = list(set([x for x in analysis['thread_groups'] if x]))
-        analysis['http_requests'] = list(set([x for x in analysis['http_requests'] if x]))
-        analysis['csv_configs'] = list(set([x for x in analysis['csv_configs'] if x]))
-        analysis['response_assertions'] = list(set([x for x in analysis['response_assertions'] if x]))
-        analysis['view_results_trees'] = list(set([x for x in analysis['view_results_trees'] if x]))
+        for key in analysis:
+            if isinstance(analysis[key], list):
+                analysis[key] = sorted(list(set(analysis[key])))
 
-        # 計算預期組件數量
-        analysis['expected_components'] = (
-                len(analysis['thread_groups']) +
-                len(analysis['http_requests']) +
-                len(analysis['csv_configs']) +
-                len(analysis['response_assertions']) +
-                len(analysis['view_results_trees'])
-        )
-
+        self.logger.info(f"需求分析結果 (v2): {analysis}")
         return analysis
 
     def _debug_requirement_analysis(self, requirements: str) -> Dict:
@@ -1670,3 +1826,181 @@ class JMXGeneratorService:
         except Exception as e:
             self.logger.error(f"參數化過程中發生未預期的錯誤: {e}", exc_info=True)
             return json_body
+
+    def _assemble_jmx_from_structured_data(self, test_plan_data: Dict, context: GenerationContext) -> str:
+        """
+        【⭐ 最終修正版 v2】JMX 組裝器：從結構化資料組裝 JMX 檔案。
+
+        此版本以 context 為主體進行組裝，確保附件資料 (如 Body 和 CSV) 絕對不會遺失或錯置。
+        同時，它強制執行了關鍵的業務規則，例如：
+        1. 測試計畫名稱直接取自 context，解決了名稱遺失問題。
+        2. CSVDataSet 的 ignoreFirstLine 屬性被強制設為 'true'，解決了讀取標頭行的錯誤。
+        """
+        self.logger.info("=== 步驟 4 (修正流程 v2): 開始從結構化資料組裝 JMX ===")
+        self.logger.info("採用『以 Context 為事實唯一來源』的策略進行組裝。")
+
+        test_plan_components = []
+
+        # 1. 組裝全域元件 (HTTP Defaults, Header Manager)
+        http_defaults_data = test_plan_data.get("http_defaults", {})
+        if http_defaults_data and http_defaults_data.get("domain"):
+            http_defaults_xml = self.jmx_templates["http_defaults"].format(
+                domain=http_defaults_data.get("domain", ""),
+                protocol=http_defaults_data.get("protocol", "https"),
+                port=http_defaults_data.get("port", ""),
+                content_encoding=http_defaults_data.get("content_encoding", "UTF-8")
+            )
+            test_plan_components.append(http_defaults_xml)
+
+        global_headers_data = test_plan_data.get("global_headers", [])
+        if global_headers_data:
+            headers_xml_parts = [
+                self.jmx_templates["header_element"].format(
+                    name=saxutils.escape(h.get("name", "")),
+                    value=saxutils.escape(h.get("value", ""))
+                ) for h in global_headers_data if h and h.get("name")
+            ]
+            if headers_xml_parts:
+                test_plan_components.append(
+                    self.jmx_templates["header_manager"].format(headers="\n              ".join(headers_xml_parts))
+                )
+
+        # 2. 【核心邏輯】以 context.thread_groups 為絕對主導進行迭代
+        for tg_context in context.thread_groups:
+            tg_name = tg_context.name
+            self.logger.info(f"🔄 正在組裝 Thread Group: '{tg_name}' (基於 Context)")
+
+            # 從 LLM 回應中找到對應此 Thread Group 的補充資料
+            tg_data_from_llm = next((tg for tg in test_plan_data.get("thread_groups", []) if tg.get("name") == tg_name),
+                                    {})
+
+            thread_group_children = []  # 存放此 Thread Group 下的所有子元件
+
+            # 2a. 【解決 CSV 問題】根據 Context 組裝 CSV 元件
+            if tg_context.csv_configs:
+                for csv_info in tg_context.csv_configs:
+                    csv_data_from_llm = next((c for c in tg_data_from_llm.get("csv_data_configs", []) if
+                                              c.get("filename") == csv_info.filename), {})
+
+                    # ⭐【關鍵修正】強制設定 ignoreFirstLine 為 true。
+                    # 因為我們的流程總是讀取 CSV 標頭作為變數名，所以必須忽略第一行資料。
+                    # 這是一個確定性的規則，可以覆蓋任何來自 LLM 的不正確建議。
+                    ignore_first_line_value = "true"
+
+                    csv_xml = self.jmx_templates["csv_data_set_config"].format(
+                        filename=csv_info.filename,
+                        variable_names=",".join(csv_info.variable_names),
+                        delimiter=csv_data_from_llm.get("delimiter", ","),
+                        ignore_first_line=ignore_first_line_value,  # 使用我們修正後的確定性值
+                        allow_quoted_data="false", recycle="true", stop_thread="false", share_mode="shareMode.all"
+                    )
+                    thread_group_children.append(csv_xml)
+                    self.logger.info(f"  -> ✅ 已為 '{tg_name}' 組裝 CSV: {csv_info.filename} (強制忽略標頭行)")
+
+            # 2b. 【解決 Body 錯置問題】根據 Context 組裝 HTTP Request
+            if tg_context.http_requests:
+                for http_req_info in tg_context.http_requests:
+                    req_name = http_req_info.name
+                    req_data_from_llm = next(
+                        (req for req in tg_data_from_llm.get("http_requests", []) if req.get("name") == req_name), {})
+
+                    # 直接從 context 獲取 Body，這是最可靠的來源
+                    body_content = http_req_info.json_body or "{}"
+                    escaped_body = saxutils.escape(body_content)
+
+                    http_request_xml = self.jmx_templates["http_request_with_body"].format(
+                        name=saxutils.escape(req_name),
+                        path=req_data_from_llm.get("path", "/"),
+                        method=req_data_from_llm.get("method", "POST"),
+                        body_data=escaped_body
+                    )
+                    self.logger.info(f"  -> ✅ 已為 '{tg_name}' 組裝 HTTP Request: {req_name}")
+
+                    # 組裝子元件 (如斷言)
+                    sampler_children_xml = self._assemble_assertions(req_data_from_llm.get("assertions", []))
+
+                    # 組合 Sampler 和其子元件
+                    if sampler_children_xml:
+                        full_sampler_xml = f"{http_request_xml}\n            <hashTree>\n              {sampler_children_xml}\n            </hashTree>"
+                        thread_group_children.append(full_sampler_xml)
+                    else:
+                        thread_group_children.append(f"{http_request_xml}\n            <hashTree/>")
+
+            # 3. 組裝 Thread Group 本身
+            tg_content_xml = "\n            ".join(thread_group_children)
+            thread_group_xml = self.jmx_templates["thread_group"].format(
+                name=saxutils.escape(tg_name),
+                on_sample_error=tg_data_from_llm.get("on_sample_error", "continue"),
+                loops=tg_data_from_llm.get("loops", -1),
+                num_threads=tg_data_from_llm.get("num_threads", 3),
+                ramp_time=tg_data_from_llm.get("ramp_time", 1),
+                scheduler=str(tg_data_from_llm.get("scheduler", "true")).lower(),
+                duration=tg_data_from_llm.get("duration", 10),
+                content=tg_content_xml
+            )
+            test_plan_components.append(thread_group_xml)
+
+        # 4. 組裝最終的 Test Plan
+        final_content_xml = "\n          ".join(test_plan_components)
+        final_jmx = self.jmx_templates["test_plan_structure"].format(
+            # ⭐【關鍵修正】直接使用 context 中的 test_plan_name，確保名稱正確無誤
+            test_name=saxutils.escape(context.test_plan_name),
+            comments="Generated by JMXGeneratorService with structural fixes.",
+            tear_down_on_shutdown=str(test_plan_data.get("tear_down_on_shutdown", "true")).lower(),
+            content=final_content_xml
+        )
+
+        self.logger.info("✅ JMX 組裝完成 (v2)！所有附件資料已根據 Context 強制寫入。")
+        return self.jmx_templates["xml_header"] + "\n" + final_jmx
+
+    def _assemble_assertions(self, assertions_data: List[Dict]) -> str:
+        """
+        根據結構化資料組裝一或多個 Response Assertion 的 XML 字串。
+        """
+        if not assertions_data:
+            return ""
+
+        all_assertions_xml_parts = []
+        for assertion_details in assertions_data:
+            if not assertion_details or not assertion_details.get("name"):
+                continue
+
+            patterns_list = assertion_details.get("patterns", [])
+            if not patterns_list:
+                continue
+
+            patterns_to_test_xml_parts = [
+                self.jmx_templates["assertion_pattern"].format(
+                    hash_code=str(hash(p)),
+                    pattern=saxutils.escape(p)
+                ) for p in patterns_list if p
+            ]
+
+            if not patterns_to_test_xml_parts:
+                continue
+
+            full_assertion_xml = self.jmx_templates["response_assertion"].format(
+                name=saxutils.escape(assertion_details.get("name", "Response Assertion")),
+                patterns_to_test="\n                  ".join(patterns_to_test_xml_parts),
+                test_field=assertion_details.get("test_field", "response_data"),
+                test_type=assertion_details.get("test_type", 2)  # 預設為 "Contains"
+            )
+            all_assertions_xml_parts.append(f"{full_assertion_xml}\n              <hashTree/>")
+
+        return "\n              ".join(all_assertions_xml_parts)
+
+    def _find_http_request_info_in_context(self, context: GenerationContext, name: str) -> Optional[HttpRequestInfo]:
+        """根據請求名稱從 GenerationContext 中安全地查找 HttpRequestInfo。"""
+        for tg_context in context.thread_groups:
+            for req_info in tg_context.http_requests:
+                if req_info.name == name:
+                    return req_info
+        return None
+
+    def _find_req_data_by_name(self, test_plan_data: Dict, name: str) -> Dict:
+        """輔助函式：根據名稱從 LLM 的輸出中查找對應的請求資料。"""
+        for tg in test_plan_data.get("thread_groups", []):
+            if tg.get("http_request", {}).get("name") == name:
+                return tg["http_request"]
+        self.logger.warning(f"在 LLM 輸出中未找到名為 '{name}' 的請求資料，將返回空字典。")
+        return {}

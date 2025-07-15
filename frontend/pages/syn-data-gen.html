@@ -93,21 +93,10 @@
             <!-- 回饋與操作按鈕 -->
             <div class="feedback-container">
                 <label for="userFeedback">回饋或修改建議 (可選)</label>
-
-                <!-- 【新增】Radio Button 選擇要校對的目標 -->
-                <div class="review-target-selector">
-                    <input type="radio" id="reviewTargetBody" name="reviewTarget" value="body" checked>
-                    <label for="reviewTargetBody">Body (Markdown)</label>
-
-                    <input type="radio" id="reviewTargetHeader" name="reviewTarget" value="header">
-                    <label for="reviewTargetHeader">Header (JSON)</label>
-                </div>
-
-                <textarea id="userFeedback" placeholder="若自動生成的規格有誤，請在此輸入修改建議..." rows="4"></textarea>
+                <textarea id="userFeedback" placeholder="若自動生成的 Markdown 規格有誤，請在此輸入修改建議..." rows="4"></textarea>
             </div>
             <div class="action-buttons markdown-actions">
-                <!-- 【修改】按鈕文字和 ID -->
-                <button class="btn btn-primary" id="reviewSpecBtn" disabled>校對規格</button>
+                <button class="btn btn-primary" id="reviewSpecBtn" disabled>校對 Markdown 規格</button>
                 <button class="btn btn-success" id="confirmMarkdownBtn" disabled>確認並生成合成資料</button>
                 <button class="btn btn-outline" id="downloadHeaderBtn" disabled>下載 Header (JSON)</button>
             </div>
@@ -138,14 +127,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/markdown/markdown.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
     <script src="../assets/js/syn-data-gen.js"></script>
-    
+
     <!-- 通知元件 -->
     <div id="notification" class="notification-toast" style="display: none;">
         <span class="notification-icon"></span>
         <span class="notification-message"></span>
         <button class="notification-close" onclick="hideNotification()">×</button>
     </div>
-    
+
     <script src="syn-data-gen.js"></script>
 </body>
 </html>

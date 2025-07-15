@@ -93,30 +93,27 @@ class SynDataGenService:
             self.logger.error(f"提取 JSON 物件/陣列時發生錯誤: {e}")
             return None
 
-    async def generate_header_json_from_doc(self, text: str, filename: str = "unknown") -> Optional[str]:
+    async def generate_header_json_from_doc(self, text: str, filename: str = "unknown") -> Optional[Union[Dict, List[Dict]]]:
         """
-        從文件中穩健地提取所有 "上行／請求電文範例" 的 JSON 物件，
-        並將它們格式化為一個統一的 Markdown 字串。
+        從文件中穩健地提取所有 "上行／請求電文範例" 的 JSON 物件。
 
         此函式能自動處理單一或多個 JSON 範例的情況：
-        - 如果找到多個範例，它會將它們全部格式化到一個 Markdown 字串中，
-          並用 "請求範例 X" 標題區分。
-        - 如果只找到一個範例，它會返回該範例的 Markdown 字串。
-        - 如果提取失敗或找不到任何範例，則返回 None。
-
-        這樣設計可以讓呼叫端的程式碼保持簡單，無需處理列表。
+        - 如果找到多個範例，它會將它們以一個 JSON 陣列 (list of dicts) 的形式返回。
+        - 如果只找到一個範例，它會直接返回該 JSON 物件 (dict)。
+        - 如果找不到任何有效範例，則返回一個空列表 `[]`。
+        - 如果在過程中發生解析錯誤，則返回 None。
 
         Args:
             text: 包含 API 規格的文件內容。
             filename: 正在處理的文件名稱，用於日誌記錄。
 
         Returns:
-            一個包含所有請求範例的 Markdown 字串，如果失敗則返回 None。
+            一個單一的 JSON 物件 (dict)、一個 JSON 物件列表 (list[dict])、
+            一個空列表 `[]`，如果失敗則返回 None。
         """
-        self.logger.info(f"開始為檔案 '{filename}' 提取所有請求 JSON 範例並格式化 (Model: {self._model_name})...")
-        llm_output = ""
+        self.logger.info(f"開始為檔案 '{filename}' 提取所有請求 JSON 範例 (Model: {self._model_name})...")
 
-        # 步驟 1: 使用已驗證成功的 Prompt，提取所有範例到一個陣列中
+        # 【優化】強化 Prompt，明確要求物件陣列，並定義找不到時的行為
         prompt = textwrap.dedent(f"""
             [INST]<<SYS>>
             You are a meticulous data extraction specialist. Your task is to find ALL upstream request JSON examples within a specific, well-defined section of a document.
@@ -125,14 +122,13 @@ class SynDataGenService:
             2.  **SCANNING:** Scan the text immediately following this heading. You will find multiple distinct JSON objects. They are often preceded by descriptive text.
             3.  **STOPPING POINT:** Continue scanning and extracting ALL JSON objects until you encounter the next major heading, "下行／回應電文規格". This heading marks the end of the relevant section. **Do NOT extract any JSON from or after this stopping point.**
             4.  **COLLECTION:** Gather every JSON object you found between the starting point and the stopping point.
-            5.  **OUTPUT FORMAT:** Combine all the collected JSON objects into a single, valid JSON array `[...]`. Even if you only find one, it must be inside an array.
+            5.  **OUTPUT FORMAT:** Combine all the collected JSON objects into a single, valid JSON array `[...]`. The array must contain only JSON objects (e.g., {{"key": "value"}}). Even if you only find one, it must be inside an array. **If you find no valid JSON examples, return an empty array `[]`.**
             6.  **FINAL RESPONSE:** Your response MUST ONLY be the raw JSON array. Do not add any explanations, comments, or markdown fences (like ```json).
             <</SYS>>
             **DOCUMENT TEXT TO ANALYZE:**
             ---
             {text[:self.max_text_length]}
             ---
-
             **CORRECTED JSON ARRAY:**
             [/INST]
         """)
@@ -141,46 +137,52 @@ class SynDataGenService:
             llm_output = await asyncio.to_thread(self.llm_service.generate_text, prompt)
             self.logger.debug(f"LLM 原始輸出 for '{filename}':\n---\n{llm_output}\n---")
 
-            parsed_data = json.loads(llm_output)
-
-            if not isinstance(parsed_data, list) or not parsed_data:
-                self.logger.warning(f"LLM 未能返回有效的 JSON 陣列或陣列為空。檔案: '{filename}'")
-                # 可以在此處觸發修復機制，如果需要的話
+            json_string = self._extract_first_json_object(llm_output)
+            if not json_string:
+                self.logger.warning(f"LLM 未能為檔案 '{filename}' 返回可解析的 JSON 陣列結構。")
                 return None
 
-            # 步驟 2: 根據提取到的範例數量，決定如何格式化輸出
-            self.logger.info(f"成功為檔案 '{filename}' 提取並解析了 {len(parsed_data)} 個範例。")
+            parsed_data = json.loads(json_string)
 
-            if len(parsed_data) == 1:
-                # 情況一：只有一個範例
-                self.logger.info("檢測到單一範例，將直接格式化。")
-                header_json = parsed_data[0]
-                header_str = json.dumps(header_json, indent=2, ensure_ascii=False)
-                return f"```json\n{header_str}\n```"
+            # 【優化】首先檢查回傳的是否為列表
+            if not isinstance(parsed_data, list):
+                self.logger.warning(
+                    f"LLM 未能返回有效的 JSON 陣列，而是返回了 {type(parsed_data)} 型別。檔案: '{filename}'")
+                return None
 
-            else:
-                # 情況二：有多個範例
-                self.logger.info("檢測到多個範例，將合併格式化為單一 Markdown。")
-                markdown_parts = []
-                for i, header_json in enumerate(parsed_data):
-                    if not isinstance(header_json, dict):
-                        self.logger.warning(f"在檔案 '{filename}' 的第 {i + 1} 個範例不是有效的 JSON 物件，將跳過。")
-                        continue
+            # 【核心修改】過濾掉陣列中非字典的元素，這能直接解決您遇到的問題
+            valid_examples = [item for item in parsed_data if isinstance(item, dict)]
 
-                    header_str = json.dumps(header_json, indent=2, ensure_ascii=False)
-                    # 為每個範例加上標題和代碼塊
-                    part = f"### 請求範例 {i + 1}\n\n```json\n{header_str}\n```"
-                    markdown_parts.append(part)
+            if len(valid_examples) < len(parsed_data):
+                # 記錄下被過濾掉的無效元素，方便追蹤 LLM 的行為
+                invalid_items = [item for item in parsed_data if not isinstance(item, dict)]
+                self.logger.warning(
+                    f"從 LLM 返回的陣列中過濾掉了 {len(invalid_items)} 個非 JSON 物件的元素。 "
+                    f"無效內容: {str(invalid_items)[:500]}. 檔案: '{filename}'"
+                )
 
-                # 將所有部分的 Markdown 用分隔線合併成一個字串
-                return "\n\n---\n\n".join(markdown_parts)
+            # 【優化】根據過濾後的有效範例數量進行判斷
+            num_valid_examples = len(valid_examples)
+            self.logger.info(f"成功為檔案 '{filename}' 提取並解析了 {num_valid_examples} 個有效範例。")
+
+            if num_valid_examples == 0:
+                # 情況一：找不到任何有效範例，或 LLM 返回空陣列
+                self.logger.info(f"在檔案 '{filename}' 中未找到有效範例，將返回空陣列。")
+                return []  # 返回空陣列，而不是 None，讓呼叫端可以明確處理
+
+            elif num_valid_examples == 1:
+                # 情況二：只有一個有效範例，直接回傳該物件 (dict)
+                self.logger.info("檢測到單一有效範例，將直接返回 JSON 物件。")
+                return valid_examples[0]
+
+            else:  # num_valid_examples > 1
+                # 情況三：有多個有效範例，回傳整個列表 (list of dicts)
+                self.logger.info(f"檢測到 {num_valid_examples} 個有效範例，將返回 JSON 物件陣列。")
+                return valid_examples
 
         except json.JSONDecodeError as e:
             self.logger.error(f"為檔案 '{filename}' 提取的 JSON 陣列格式錯誤或無效: {e}", exc_info=True)
-            # 您可以在這裡保留或擴展您的自我修正邏輯
-            # fixed_json = await self._fix_json_with_llm(...)
             return None
-
         except Exception as e:
             self.logger.error(f"為檔案 '{filename}' 提取請求 JSON 時發生未知錯誤: {e}", exc_info=True)
             return None
@@ -394,12 +396,12 @@ class SynDataGenService:
     async def generate_data_from_markdown(self, body_markdown: str, header_json_markdown: str, full_doc_text: str,
                                           context_id: str, num_records: int) -> dict:
         """
-        從規格書生成合成資料。
-        流程：決定加密參數 -> 準備上下文 -> 偵測加密欄位 -> LLM生成 -> 後處理加密 -> 打包輸出。
+        【V3 版 - 支援多範例】從規格書生成合成資料。
+        此版本能處理多個請求範例，並將生成任務分配給它們，以產生更多樣化的資料。
         """
-        self.logger.info(f"開始為上下文 '{context_id}' 生成 {num_records} 筆合成資料...")
+        self.logger.info(f"開始為上下文 '{context_id}' 生成 {num_records} 筆合成資料 (多範例模式)...")
         try:
-            # 步驟 1: 決定最終要使用的加密參數 (文件優先，備援其次)
+            # 步驟 1: 決定加密參數 (邏輯不變)
             self.logger.info("正在嘗試從文件中提取加密參數...")
             final_encryption_params = {"key": self.fallback_des3_key, "iv": self.fallback_des3_iv}
             extracted_params = await self._extract_encryption_params_with_llm(full_doc_text)
@@ -408,47 +410,77 @@ class SynDataGenService:
             else:
                 self.logger.warning("將使用預設的備援加密參數。")
 
-            # 步驟 2: 準備生成資料所需的上下文 (Body 規則和範例)
-            request_example_json_str = self._extract_json_from_header_markdown(header_json_markdown)
-            if not body_markdown or not request_example_json_str:
-                return {"success": False, "error": "Body (Markdown) 或 Header (JSON) 內容為空或無效。"}
+            # 步驟 2: 解析並驗證所有 Header JSON 範例
+            valid_examples = []
+            try:
+                if not header_json_markdown or not header_json_markdown.strip():
+                    raise ValueError("傳入的 Header JSON 字串為空。")
 
-            request_example_dict = json.loads(request_example_json_str)
-            body_key, body_object = self._extract_request_body_from_example(request_example_dict)
-            if not body_key or not body_object:
-                return {"success": False, "error": "無法從請求範例中識別出主要的 Body 物件 (如 TRANRQ)。"}
-            body_example_json_str = json.dumps(body_object, indent=2, ensure_ascii=False)
+                parsed_header = json.loads(header_json_markdown)
+                if isinstance(parsed_header, list):
+                    if not parsed_header:
+                        raise ValueError("傳入的 Header JSON 陣列為空。")
+                    valid_examples = [item for item in parsed_header if isinstance(item, dict)]
+                elif isinstance(parsed_header, dict):
+                    valid_examples = [parsed_header]
 
-            # 步驟 3: 掃描 Markdown，找出需要加密的欄位
-            encrypted_fields = self._find_encrypted_fields(body_markdown)
+                if not valid_examples:
+                    raise ValueError("在 Header JSON 中找不到任何有效的物件範例。")
 
-            # 步驟 4: 呼叫 LLM 生成包含未加密源資料的半成品
-            generated_records = await self._batch_generate_creative_data_with_llm(
-                body_markdown=body_markdown,
-                body_example_json=body_example_json_str,
-                num_records=num_records,
-                encrypted_fields=encrypted_fields
-            )
-            if not generated_records:
-                raise ValueError("LLM 返回了空的資料列表。")
+                self.logger.info(f"成功解析 {len(valid_examples)} 個有效的請求範例。")
 
-            # 步驟 5: 後處理，對標記的欄位執行加密
-            final_records = []
-            if encrypted_fields:
-                self.logger.info(f"正在對 {encrypted_fields} 欄位進行後處理加密...")
-                for record in generated_records:
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                self.logger.error(f"解析 Header JSON 時失敗: {e}", exc_info=True)
+                return {"success": False, "error": f"Header (JSON) 內容無效或格式不符: {e}"}
+
+            # 步驟 3: 迭代所有範例，分配任務並生成資料
+            all_generated_records = []
+            num_examples = len(valid_examples)
+
+            for i, request_example_dict in enumerate(valid_examples):
+                # 分配每個範例要生成的筆數
+                records_for_this_example = num_records // num_examples
+                if i < num_records % num_examples:
+                    records_for_this_example += 1
+
+                if records_for_this_example == 0:
+                    continue
+
+                self.logger.info(f"正在使用第 {i + 1}/{num_examples} 個範例生成 {records_for_this_example} 筆資料...")
+
+                # 為當前範例提取 Body 物件
+                body_key, body_object = self._extract_request_body_from_example(request_example_dict)
+                if not body_key or not body_object:
+                    self.logger.warning(f"第 {i + 1} 個範例無法識別出 Body 物件，將跳過。")
+                    continue
+                body_example_json_str = json.dumps(body_object, indent=2, ensure_ascii=False)
+
+                # 掃描 Markdown，找出需要加密的欄位 (每次都掃描，因為不同 Body 結構可能對應不同加密欄位)
+                encrypted_fields = self._find_encrypted_fields(body_markdown)
+
+                # 呼叫 LLM 生成半成品資料
+                generated_records_batch = await self._batch_generate_creative_data_with_llm(
+                    body_markdown=body_markdown,
+                    body_example_json=body_example_json_str,
+                    num_records=records_for_this_example,
+                    encrypted_fields=encrypted_fields
+                )
+                if not generated_records_batch:
+                    self.logger.warning(f"第 {i + 1} 個範例未能生成任何資料。")
+                    continue
+
+                # 後處理加密，並將結果加入總列表
+                for record in generated_records_batch:
                     processed_record = self._process_encryption_placeholders(record, final_encryption_params)
-                    final_records.append(processed_record)
-            else:
-                self.logger.info("無需加密後處理。")
-                final_records = generated_records
+                    # 【關鍵】將拍平後的資料加入總列表，並傳入該批次的 body_key
+                    all_generated_records.append(self._flatten_dict(processed_record, parent_key=body_key))
 
-            # 步驟 6: 將最終資料拍平並打包成 Markdown 和 CSV 格式
-            all_records_flattened = [self._flatten_dict(rec, parent_key=body_key) for rec in final_records]
-            if not all_records_flattened:
-                return {"success": False, "error": "資料生成後無法轉換為表格。"}
+            if not all_generated_records:
+                return {"success": False, "error": "所有範例均未能成功生成資料。"}
 
-            markdown_table = self._convert_flattened_data_to_markdown(all_records_flattened)
+            # 步驟 4: 將最終的、結構可能不同的資料打包成統一的 Markdown 和 CSV
+            self.logger.info(f"總共生成 {len(all_generated_records)} 筆資料，正在打包成表格...")
+            markdown_table = self._convert_flattened_data_to_markdown(all_generated_records)
             csv_content = self._convert_markdown_to_csv(markdown_table)
 
             self.logger.info(f"成功為上下文 '{context_id}' 生成並打包混合模型資料。")
@@ -758,26 +790,32 @@ class SynDataGenService:
 
     def _convert_flattened_data_to_markdown(self, flattened_data: List[Dict]) -> str:
         """
-        將拍平後的資料列表轉換為 Markdown 表格字串。
-
-        :param flattened_data: 一個字典的列表，例如 [{'key1': 'valA', 'key2': 'valB'}, ...]。
-        :return: 一個格式化的 Markdown 表格字串。
+        【V2 版 - 支援異構資料】將拍平後的資料列表轉換為 Markdown 表格字串。
+        此版本能處理列表中包含不同鍵集合的字典，會自動建立所有鍵的聯集作為表頭。
         """
         if not flattened_data:
             self.logger.warning("嘗試將空的資料列表轉換為 Markdown，返回空字串。")
             return ""
 
-        # 從第一筆資料中獲取所有欄位名稱作為表頭
-        headers = list(flattened_data[0].keys())
+        # 步驟 1: 收集所有記錄中出現過的所有唯一鍵，作為統一的表頭
+        all_keys = {}  # 使用字典來保持插入順序 (Python 3.7+)
+        for record in flattened_data:
+            for key in record.keys():
+                all_keys[key] = None
 
-        # 建立 Markdown 的表頭和分隔線
+        headers = list(all_keys.keys())
+        if not headers:
+            self.logger.warning("資料存在但所有記錄都為空，無法生成表頭。")
+            return ""
+
+        # 步驟 2: 建立 Markdown 的表頭和分隔線
         header_line = "| " + " | ".join(headers) + " |"
         separator_line = "| " + " | ".join(["---"] * len(headers)) + " |"
 
-        # 建立資料行
+        # 步驟 3: 建立資料行
         data_rows = []
         for record in flattened_data:
-            # 確保按照表頭的順序提取值，如果某筆資料缺少某個鍵，則用空字串代替
+            # 根據統一的表頭順序提取值。如果某筆記錄缺少某個鍵，則用空字串代替。
             row_values = [str(record.get(h, '')) for h in headers]
             data_rows.append("| " + " | ".join(row_values) + " |")
 

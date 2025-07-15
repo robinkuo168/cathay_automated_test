@@ -34,7 +34,7 @@ const elements = {
 
 // 初始化 Header JSON 的 CodeMirror 編輯器
 const headerEditor = CodeMirror.fromTextArea(elements.headerJson, {
-    mode: 'markdown', // <--- 已修正！改為 Markdown 模式
+    mode: { name: 'javascript', json: true },
     theme: 'monokai',
     lineNumbers: true,
     autoCloseBrackets: true,
@@ -154,55 +154,24 @@ function initializeFileInput() {
         });
     }
 
-    // 【加入偵錯日誌】
+    // 【核心修改】簡化「校對 Markdown 規格」按鈕的邏輯
     if (elements.reviewSpecBtn) {
         elements.reviewSpecBtn.addEventListener('click', () => {
-            console.log("--- 「校對規格」按鈕點擊事件觸發 ---");
+            console.log("--- 「校對 Markdown 規格」按鈕點擊事件觸發 ---");
 
             const feedback = elements.userFeedback.value;
             if (!feedback.trim()) {
                 showNotification('請在「回饋或修改建議」欄位中輸入您的指令', 'warning');
-                console.log("偵錯：事件中止，因為回饋內容為空。");
                 return;
             }
 
-            const selectedTargetRadio = document.querySelector('input[name="reviewTarget"]:checked');
-            if (!selectedTargetRadio) {
-                console.error("偵錯：找不到任何被選中的 Radio Button！");
-                showNotification('請先選擇要校對的目標 (Header 或 Body)', 'error');
-                return;
-            }
-            const selectedTarget = selectedTargetRadio.value;
-            console.log(`偵錯：偵測到選擇的目標是 -> '${selectedTarget}'`); // 關鍵日誌 1
-
-            if (selectedTarget === 'body') {
-                console.log("偵錯：進入 'body' 校對邏輯分支。");
-                const markdown = markdownEditor.getValue();
-
-                // 關鍵日誌 2：檢查從編輯器取出的內容是否為空
-                console.log(`偵錯：從 markdownEditor 獲取的內容長度為: ${markdown.length}`);
-                if (markdown.length > 0) {
-                    console.log("偵錯：Markdown 內容有效，準備呼叫 reviewMarkdownTable API...");
-                    reviewMarkdownTable(markdown, feedback);
-                } else {
-                    showNotification('沒有可校對的 Body (Markdown) 內容', 'error');
-                    console.error("偵錯：校對中止，因為 markdownEditor 的內容為空！");
-                }
-
-            } else if (selectedTarget === 'header') {
-                console.log("偵錯：進入 'header' 校對邏輯分支。");
-                const headerMarkdown = headerEditor.getValue();
-
-                console.log(`偵錯：從 headerEditor 獲取的內容長度為: ${headerMarkdown.length}`);
-                if (headerMarkdown.length > 0) {
-                    console.log("偵錯：Header JSON 內容有效，準備呼叫 reviewHeaderJson API...");
-                    reviewHeaderJson(headerMarkdown, feedback);
-                } else {
-                    showNotification('沒有可校對的 Header (JSON) 內容', 'error');
-                    console.error("偵錯：校對中止，因為 headerEditor 的內容為空！");
-                }
+            // 直接從 Markdown 編輯器獲取內容
+            const markdown = markdownEditor.getValue();
+            if (markdown.trim().length > 0) {
+                console.log("準備呼叫 reviewMarkdownTable API...");
+                reviewMarkdownTable(markdown, feedback);
             } else {
-                console.error(`偵錯：未知的校對目標: '${selectedTarget}'`);
+                showNotification('沒有可校對的 Body (Markdown) 內容', 'error');
             }
         });
     }
@@ -220,19 +189,10 @@ function initializeFileInput() {
     if (elements.downloadHeaderBtn) {
         elements.downloadHeaderBtn.addEventListener('click', () => {
             if (headerJsonData) {
-                try {
-                    const structuredJson = convertMarkdownToJson(headerJsonData);
-                    if (structuredJson.length === 0) {
-                        showNotification('無法從內容中解析出有效的 JSON 範例', 'warning');
-                        return;
-                    }
-                    const jsonString = JSON.stringify(structuredJson, null, 2);
-                    downloadTextAsFile(jsonString, 'api_examples.json', 'application/json');
-                    showNotification('結構化 JSON 下載開始', 'success');
-                } catch (error) {
-                    console.error('轉換為 JSON 時發生錯誤:', error);
-                    showNotification(`轉換為 JSON 失敗: ${error.message}`, 'error');
-                }
+                const dataToDownload = Array.isArray(headerJsonData) ? headerJsonData : [headerJsonData];
+                const jsonString = JSON.stringify(dataToDownload, null, 2);
+                downloadTextAsFile(jsonString, 'api_examples.json', 'application/json');
+                showNotification('結構化 JSON 下載開始', 'success');
             } else {
                 showNotification('沒有可下載的範例資料', 'error');
             }
@@ -389,28 +349,28 @@ function removeSelectedFile() {
 function clearSelectedFiles() {
     console.log('清除選擇的檔案');
     removeSelectedFile();
-    
+
     // Reset UI elements
     if (syntheticDataEditor) {
         syntheticDataEditor.setValue('');
     }
-    
+
     if (elements.userFeedback) {
         elements.userFeedback.value = '';
     }
-    
+
     if (elements.generateMarkdownBtn) {
         elements.generateMarkdownBtn.style.display = 'none';
     }
-    
+
     if (elements.specAnalysisSection) {
         elements.specAnalysisSection.style.display = 'none'; // 隱藏分析區塊
     }
-    
+
     if (elements.syntheticSection) {
         elements.syntheticSection.style.display = 'none'; // 隱藏合成資料區塊
     }
-    
+
     updateStatus('已清除檔案，可以重新開始');
 }
 
@@ -516,7 +476,7 @@ function updateButtonStates() {
 }
 
 async function generateSpecAnalysis(text, filename) {
-    updateStatus('正在分析規格，提取範例與 Body...'); // 文字微調
+    updateStatus('正在分析規格，提取範例與 Body...');
     elements.generateMarkdownBtn.disabled = true;
 
     try {
@@ -530,19 +490,40 @@ async function generateSpecAnalysis(text, filename) {
         const result = await response.json();
         console.log('後端回傳 (generate-markdown):', JSON.stringify(result, null, 2));
 
-        // ▼▼▼▼▼ 【核心修正】 ▼▼▼▼▼
-        const headerContent = result.data?.header_json; // 這是 Markdown 字串
+        const headerContent = result.data?.header_json;
         const markdownContent = result.data?.body_markdown;
 
-        if (result.success && (headerContent || markdownContent)) {
-            if (typeof headerContent === 'string' && headerContent.length > 0) {
-                headerJsonData = headerContent; // 直接儲存 Markdown 字串
-                headerEditor.setValue(headerContent); // 直接將字串設定到編輯器
-            } else {
-                headerJsonData = null;
-                headerEditor.setValue("### 請求範例\n\n// 未能從文件中提取請求範例");
+        if (result.success) {
+            let isValidHeader = false;
+            if (headerContent && typeof headerContent === 'object') {
+                // 判斷是否為有效的 Header 內容 (非 null、非空物件、非空陣列)
+                if (Array.isArray(headerContent)) {
+                    isValidHeader = headerContent.length > 0;
+                } else { // 如果是物件
+                    isValidHeader = Object.keys(headerContent).length > 0;
+                }
             }
 
+            if (isValidHeader) {
+                // 1. 儲存原始的 JSON 物件/陣列
+                headerJsonData = headerContent;
+
+                // 2. 直接將 JSON 物件美化成字串，用於顯示
+                const jsonString = JSON.stringify(headerContent, null, 2);
+                headerEditor.setValue(jsonString);
+
+                // 3. 將編輯器模式設定為 JSON，以獲得正確的語法高亮
+                headerEditor.setOption('mode', { name: 'javascript', json: true });
+
+            } else {
+                // 處理所有無效情況：null, undefined, {}, []
+                headerJsonData = null;
+                headerEditor.setValue("// 未能從文件中提取有效的請求範例。");
+                // 註解使用 Markdown 模式顯示更清晰
+                headerEditor.setOption('mode', 'markdown');
+            }
+
+            // --- Body Markdown 的處理邏輯保持不變 ---
             if (markdownContent) {
                 markdownTable = markdownContent;
                 markdownEditor.setValue(markdownContent);
@@ -676,7 +657,7 @@ function setUILoading(isLoading) {
     elements.reviewSpecBtn.disabled = isLoading;
 }
 
-async function generateSyntheticData(filename) { // 參數 filename 來自 selectedFile.name
+async function generateSyntheticData(filename) {
     const numRowsStr = window.prompt("請輸入要生成的資料筆數：", "30");
     if (numRowsStr === null) {
         updateStatus('已取消生成合成資料');
@@ -694,21 +675,33 @@ async function generateSyntheticData(filename) { // 參數 filename 來自 selec
     setUILoading(true);
 
     try {
-        const finalHeaderJsonMarkdown = headerEditor.getValue();
+        // 1. 從編輯器獲取原始字串
+        const headerJsonString = headerEditor.getValue();
         const finalBodyMarkdown = markdownEditor.getValue();
+
+        // 2. 【核心修正】驗證字串是否為有效的 JSON，但不改變要發送的變數
+        try {
+            JSON.parse(headerJsonString); // 僅用於驗證，如果格式錯誤會拋出異常
+        } catch (e) {
+            // 如果解析失敗，提示使用者並中止
+            alert('「API Body (JSON 規格)」中的內容不是有效的 JSON 格式，請修正後再試。\n\n錯誤詳情: ' + e.message);
+            updateStatus('生成中止：Header JSON 格式錯誤。');
+            setUILoading(false);
+            return;
+        }
 
         if (!extractedText) {
             throw new Error("找不到原始文件的提取文字，無法繼續生成。請重新上傳檔案。");
         }
 
+        // 3. 【核心修正】發送請求時，傳遞原始的 `headerJsonString` 字串
         const response = await fetch(`${API_BASE}/start-synthetic-data-task`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // 在請求 body 中加入 full_doc_text 欄位
             body: JSON.stringify({
                 body_markdown: finalBodyMarkdown,
-                header_json_markdown: finalHeaderJsonMarkdown,
-                full_doc_text: extractedText, // <<< 新增此欄位，其值來自全域變數
+                header_json_markdown: headerJsonString, // <-- 傳送原始字串，而不是解析後的物件
+                full_doc_text: extractedText,
                 filename: filename,
                 num_rows: numRows
             })
@@ -716,7 +709,16 @@ async function generateSyntheticData(filename) { // 參數 filename 來自 selec
 
         if (!response.ok) {
              const errorText = await response.text();
-             throw new Error(`啟動任務失敗 (HTTP ${response.status}): ${errorText}`);
+             // 嘗試解析錯誤文字，如果它是 JSON，則顯示更友善的訊息
+             try {
+                const errorJson = JSON.parse(errorText);
+                // 檢查是否有 FastAPI 的詳細錯誤結構
+                const detail = errorJson.detail && Array.isArray(errorJson.detail) ? JSON.stringify(errorJson.detail) : errorJson.error;
+                throw new Error(detail || `啟動任務失敗 (HTTP ${response.status})`);
+             } catch (e) {
+                // 如果解析失敗，或不是預期的錯誤結構，則顯示原始錯誤文字
+                throw new Error(e.message.includes("啟動任務失敗") ? e.message : `啟動任務失敗 (HTTP ${response.status}): ${errorText}`);
+             }
         }
 
         const startResult = await response.json();
@@ -820,7 +822,7 @@ function showNotification(message, type = 'info') {
     // 設置訊息和圖標
     notificationMessage.textContent = message;
     notification.className = `notification-toast ${type}`;
-    
+
     // 設置圖標
     const icons = {
         'success': '✓',
@@ -860,7 +862,7 @@ function formatFileSize(bytes) {
  * @returns {Array<Object>} - 包含標題和請求內容的物件陣列。
  */
 function convertMarkdownToJson(markdownString) {
-    const requestBodies = []; // ▼▼▼ 已修改 ▼▼▼: 陣列名稱變更，更符合內容
+    const requestBodies = [];
 
     // 正規表示法維持不變，它能有效地從兩種格式中提取出 JSON 內容
     const regex = /(?:###\s*(.*?)\s*)?```json\n([\s\S]*?)\n```/g;

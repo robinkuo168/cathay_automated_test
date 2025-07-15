@@ -43,6 +43,16 @@ class LLMService:
             # 確保 model_id 是小寫
             model_id = config["model_id"].lower()
             
+            # 準備認證參數
+            credentials_params = {
+                "url": config["url"],
+                "api_key": config["api_key"]
+            }
+            
+            # 如果提供了 instance_id，則添加到認證參數中
+            if config.get("instance_id"):
+                credentials_params["instance_id"] = config["instance_id"]
+            
             self.model = ModelInference(
                 model_id=model_id,
                 params={
@@ -53,10 +63,7 @@ class LLMService:
                     GenParams.TOP_K: config.get("top_k", 50),
                     GenParams.REPETITION_PENALTY: config.get("repetition_penalty", 1.0)
                 },
-                credentials=Credentials(
-                    url=config["url"],
-                    api_key=config["api_key"]
-                ),
+                credentials=Credentials(**credentials_params),
                 project_id=config["project_id"]
             )
             self.logger.info(f"WatsonX 模型初始化成功 (Model: {config['model_id']})")
@@ -73,6 +80,7 @@ class LLMService:
             "url": os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
             "api_key": os.getenv("WATSONX_API_KEY"),
             "project_id": os.getenv("WATSONX_PROJECT_ID"),
+            "instance_id": os.getenv("INSTANCE_ID"),  # 添加 instance_id
             "model_id": model_id,
             "max_tokens": 4000,
             "temperature": 0.1,

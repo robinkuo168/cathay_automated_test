@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request, B
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, validator, Field
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union
 import logging
 import tempfile
 import os
@@ -396,7 +396,7 @@ class TaskStartRequest(BaseModel):
         return v.strip()
 
 class SpecAnalysisData(BaseModel):
-    header_json: Optional[str] = None
+    header_json: Optional[Union[Dict, List[Dict]]]
     body_markdown: Optional[str] = None
     filename: str
 
