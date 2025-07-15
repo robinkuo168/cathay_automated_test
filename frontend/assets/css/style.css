@@ -1,4 +1,22 @@
-/* frontend/style.css */
+/* frontend/assets/css/style.css (最終版) */
+
+/*
+ * ================================================
+ * 顏色主題：國泰世華銀行品牌風格
+ * ================================================
+*/
+:root {
+    --cathay-green-primary: #00A54F; /* 國泰主綠色 */
+    --cathay-green-dark: #00873A;    /* 懸停時的深綠色 */
+    --cathay-green-light-bg: #f1f8f4; /* 淺綠色背景 */
+    --cathay-green-lighter-bg: #e6f6ec; /* 更淺的懸停背景 */
+    --background-page: #f8f9fa;      /* 頁面背景淺灰 */
+    --background-content: #ffffff;   /* 內容區塊白色 */
+    --text-primary: #333333;         /* 主要文字深灰 */
+    --text-on-dark: #ffffff;         /* 深色背景上的文字 (白色) */
+    --border-light: #e0e0e0;         /* 淺灰色邊框 */
+}
+
 
 /* 基礎重置和全域樣式 */
 * {
@@ -10,8 +28,8 @@
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     line-height: 1.6;
-    color: #333;
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    color: var(--text-primary);
+    background: var(--background-page);
     min-height: 100vh;
 }
 
@@ -20,9 +38,9 @@ body {
     max-width: 1200px;
     margin: 20px auto;
     padding: 20px;
-    background: white;
+    background: var(--background-content);
     border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.07);
 }
 
 /* header 樣式*/
@@ -30,8 +48,8 @@ header {
     text-align: center;
     margin-bottom: 0;
     padding: 30px 0;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: var(--cathay-green-primary);
+    color: var(--text-on-dark);
     border-radius: 12px;
     margin: -20px -20px 0 -20px;
 }
@@ -52,9 +70,9 @@ header p {
     text-align: center;
     padding: 20px 0;
     margin: 0 -20px 40px -20px;
-    background: linear-gradient(135deg, #f8f9ff 0%, #e3f2fd 100%);
+    background: #f1f3f5;
     border-radius: 0 0 12px 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .nav-btn {
@@ -62,19 +80,20 @@ header p {
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1.5rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: var(--cathay-green-primary);
+    color: var(--text-on-dark);
     text-decoration: none;
     border-radius: 8px;
     font-weight: 500;
     transition: all 0.3s ease;
     border: 2px solid transparent;
-    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+    box-shadow: 0 4px 15px rgba(0, 165, 79, 0.2);
 }
 
 .nav-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 8px 25px rgba(0, 165, 79, 0.3);
+    background: var(--cathay-green-dark);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -86,120 +105,124 @@ header p {
 section {
     margin: 30px 0;
     padding: 25px;
-    border: 1px solid #e0e0e0;
+    border: 1px solid var(--border-light);
     border-radius: 12px;
-    background: #fafafa;
+    background: var(--background-content); /* 統一使用白色背景以符合截圖 */
     transition: all 0.3s ease;
     animation: fadeIn 0.6s ease-out;
 }
 
-section:hover {
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-}
-
 section h2 {
     margin-bottom: 20px;
-    color: #333;
+    color: var(--text-primary);
     font-size: 1.5rem;
     font-weight: 600;
-    border-bottom: 2px solid #667eea;
+    border-bottom: 2px solid var(--cathay-green-primary);
     padding-bottom: 10px;
 }
 
 /* 檔案上傳區域樣式 */
 .file-upload-area {
-    border: 2px dashed #007bff;
+    border: 2px dashed var(--cathay-green-primary);
     border-radius: 12px;
     padding: 40px 20px;
     text-align: center;
-    background: linear-gradient(135deg, #f8f9ff 0%, #e3f2fd 100%);
+    background: var(--cathay-green-light-bg);
     transition: all 0.3s ease;
     cursor: pointer;
     margin-bottom: 20px;
 }
 
 .file-upload-area:hover, .file-upload-area.dragover {
-    background: linear-gradient(135deg, #e3f2fd 0%, #e0f7fa 100%);
-    border-color: #0056b3;
+    background: var(--cathay-green-lighter-bg);
+    border-color: var(--cathay-green-dark);
     transform: translateY(-2px);
 }
+
+/* --- 新增：分析選項卡片樣式 --- */
+.analysis-options {
+    display: grid;
+    /* 建立響應式網格，每欄最小 300px，自動填滿可用空間 */
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px; /* 卡片之間的間距 */
+    margin-top: 20px;
+}
+
+.option-card {
+    background: var(--background-content);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 30px 20px;
+    text-align: left; /* 讓文字靠左對齊，符合截圖 */
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.option-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    border-color: var(--cathay-green-primary);
+}
+
+.card-icon {
+    font-size: 1.5rem; /* 調整圖示大小 */
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.option-card h3 {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.option-card p {
+    color: #666;
+    margin-bottom: 24px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+/* 讓卡片內的按鈕靠左 */
+.option-card .btn {
+    display: inline-flex; /* 恢復按鈕的 inline-flex 特性 */
+    width: auto; /* 按鈕寬度由內容決定 */
+}
+/* --- 樣式新增結束 --- */
+
 
 /* 按鈕樣式 */
 .btn {
     padding: 0.6rem 1.2rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: var(--cathay-green-primary);
+    color: var(--text-on-dark);
     border: none;
     border-radius: 8px;
     cursor: pointer;
     font-weight: 500;
     transition: all 0.3s ease;
     font-size: 0.95rem;
-    box-shadow: 0 4px 10px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 4px 10px rgba(0, 165, 79, 0.25);
 }
 
 .btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 15px rgba(102, 126, 234, 0.5);
+    background: var(--cathay-green-dark);
+    box-shadow: 0 6px 15px rgba(0, 165, 79, 0.35);
 }
 
 .btn:active {
     transform: translateY(1px);
 }
 
-/* 文字區域樣式 */
-.textarea-container {
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    overflow: hidden;
-    height: 400px;
-    background: white;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-    resize: vertical;
-}
-
-textarea {
-    width: 100%;
-    height: 100%;
-    border: none;
-    padding: 15px;
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 0.9rem;
-    background-color: white;
-    resize: none;
-}
-
-textarea:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
-}
-
-/* 行動按鈕區段 */
-.action-buttons {
+/* 上傳控制按鈕的容器 */
+.upload-controls {
     display: flex;
-    justify-content: center;
-    align-items: center;
+    justify-content: flex-start; /* 按鈕靠左 */
     gap: 15px;
     margin-top: 20px;
-    flex-wrap: wrap;
 }
 
-.action-buttons input[type="text"] {
-    flex-grow: 1;
-    padding: 0.6rem 1rem;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    font-size: 0.9rem;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-    transition: all 0.3s ease;
-}
-
-.action-buttons input[type="text"]:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
-}
 
 /* 響應式設計 */
 @media (max-width: 768px) {
@@ -212,19 +235,13 @@ textarea:focus {
         font-size: 1.8rem;
     }
 
-    header p {
-        font-size: 1rem;
-    }
-
     .main-nav {
-        padding: 15px 0;
-        margin-bottom: 20px;
+        flex-direction: column;
     }
 
     .nav-btn {
-        padding: 0.6rem 1rem;
-        margin: 0 5px;
-        font-size: 0.9rem;
+        width: 100%;
+        margin-bottom: 10px;
     }
 
     section {
@@ -232,25 +249,10 @@ textarea:focus {
         padding: 15px;
     }
 
-    section h2 {
-        font-size: 1.3rem;
-    }
-
-    .file-upload-area {
-        padding: 20px 15px;
-    }
-
-    .textarea-container {
-        height: 300px;
-    }
-
-    .action-buttons {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .action-buttons input[type="text"] {
-        margin-bottom: 10px;
+    /* 在小螢幕上，讓卡片內的按鈕也變為全寬 */
+    .option-card .btn {
+        width: 100%;
+        justify-content: center;
     }
 }
 
@@ -265,49 +267,52 @@ textarea:focus {
     }
 }
 
-.editor-group {
-    margin-bottom: 25px; /* 在每個編輯器群組下方增加間距 */
-}
-
-.editor-group h3 {
-    margin-bottom: 10px;
-    font-size: 1.2rem;
-    color: #444;
-    font-weight: 600;
-    padding-bottom: 5px;
-    border-bottom: 1px solid #eee;
-}
-
-/* 讓下載 JSON 按鈕與其他按鈕風格協調 */
-.action-buttons.markdown-actions .btn-outline {
-    background: transparent;
-    color: #667eea;
-    border: 2px solid #667eea;
-}
-
-.action-buttons.markdown-actions .btn-outline:hover {
-    background: #f0f2ff;
-    color: #5a67d8;
-}
-
-.action-buttons.markdown-actions .btn-outline:disabled {
-    background: #f8f9fa !important;
-    color: #ccc !important;
-    border-color: #e0e0e0 !important;
-}
-
-.review-target-selector {
-    margin-bottom: 8px;
+/* 其他既有樣式 ... */
+/* ... 省略部分未修改的樣式以保持簡潔 ... */
+/* 確保 body 佔滿整個畫面高度，以便垂直置中 */
+body.landing-page {
     display: flex;
-    gap: 15px;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    min-height: 100vh;
+    margin: 0;
+    text-align: center;
+    background-color: var(--background-content);
+}
+
+/* 首頁按鈕容器 */
+.landing-page .button-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
     align-items: center;
 }
 
-.review-target-selector input[type="radio"] {
-    margin-right: 5px;
+/* 首頁 Logo 樣式 */
+.landing-page .main-logo {
+    max-width: 220px;
+    margin-bottom: 25px;
 }
 
-.review-target-selector label {
-    cursor: pointer;
-    font-size: 0.9em;
+/* 首頁導覽按鈕樣式 */
+.landing-page .nav-btn {
+    display: inline-block;
+    background-color: var(--cathay-green-primary);
+    color: var(--text-on-dark);
+    text-decoration: none;
+    font-size: 1.2rem;
+    font-weight: 500;
+    padding: 16px 40px;
+    min-width: 300px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+/* 按鈕滑鼠懸停效果 */
+.landing-page .nav-btn:hover {
+    background-color: var(--cathay-green-dark);
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
