@@ -8,12 +8,12 @@ WORKDIR /app
 # 安裝 Nginx 和 gettext (用於 envsubst 指令)
 RUN apt-get update && apt-get install -y nginx gettext && rm -rf /var/lib/apt/lists/*
 # 建立一個非 root 使用者和群組來運行應用程式
-RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser \
+RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser
 
 # ---- 準備後端 ----
-# 複製後端依賴需求檔案並安裝
+# 複製後端依賴需求檔案並安裝 (已加入 timeout 參數)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
 # 複製後端程式碼
 COPY backend/ ./backend/
@@ -30,10 +30,15 @@ COPY start.sh .
 # 給予啟動腳本執行權限
 RUN chmod +x ./start.sh
 
+# ⭐ [核心修改] ⭐
+# 預先建立 Nginx 設定檔，並將所有權交給 appuser
+# 這樣容器啟動時，appuser 身份的 start.sh 才有權限寫入此檔案
+RUN touch /etc/nginx/conf.d/default.conf && chown appuser:appuser /etc/nginx/conf.d/default.conf
+
 # 將工作目錄的所有權變更為新使用者
 RUN chown -R appuser:appuser /app
 
-# 切換到非 root 使用者
+# 切換到非 root 使用者 (為了安全性)
 USER appuser
 
 # 設定容器的啟動命令
