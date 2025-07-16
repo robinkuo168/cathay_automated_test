@@ -7,6 +7,8 @@ WORKDIR /app
 # ---- 準備環境 ----
 # 安裝 Nginx 和 gettext (用於 envsubst 指令)
 RUN apt-get update && apt-get install -y nginx gettext && rm -rf /var/lib/apt/lists/*
+# 建立一個非 root 使用者和群組來運行應用程式
+RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser \
 
 # ---- 準備後端 ----
 # 複製後端依賴需求檔案並安裝
@@ -27,6 +29,12 @@ COPY start.sh .
 
 # 給予啟動腳本執行權限
 RUN chmod +x ./start.sh
+
+# 將工作目錄的所有權變更為新使用者
+RUN chown -R appuser:appuser /app
+
+# 切換到非 root 使用者
+USER appuser
 
 # 設定容器的啟動命令
 ENTRYPOINT ["./start.sh"]

@@ -1,5 +1,7 @@
 // frontend/jmx-generator.js
-const API_BASE = 'http://localhost:8000';
+//const API_BASE = 'http://localhost:8000';
+const API_BASE = '/api';
+
 let uploadedFiles = [];
 let selectedFiles = [];
 let jmxContent = '';

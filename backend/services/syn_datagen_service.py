@@ -416,10 +416,12 @@ class SynDataGenService:
                 if not header_json_markdown or not header_json_markdown.strip():
                     raise ValueError("傳入的 Header JSON 字串為空。")
 
+                # 此處的 parsed_header 可能是 dict 或 list[dict]
                 parsed_header = json.loads(header_json_markdown)
                 if isinstance(parsed_header, list):
                     if not parsed_header:
                         raise ValueError("傳入的 Header JSON 陣列為空。")
+                    # 過濾確保陣列中都是字典
                     valid_examples = [item for item in parsed_header if isinstance(item, dict)]
                 elif isinstance(parsed_header, dict):
                     valid_examples = [parsed_header]
@@ -455,7 +457,7 @@ class SynDataGenService:
                     continue
                 body_example_json_str = json.dumps(body_object, indent=2, ensure_ascii=False)
 
-                # 掃描 Markdown，找出需要加密的欄位 (每次都掃描，因為不同 Body 結構可能對應不同加密欄位)
+                # 掃描 Markdown，找出需要加密的欄位
                 encrypted_fields = self._find_encrypted_fields(body_markdown)
 
                 # 呼叫 LLM 生成半成品資料
@@ -470,10 +472,27 @@ class SynDataGenService:
                     continue
 
                 # 後處理加密，並將結果加入總列表
-                for record in generated_records_batch:
-                    processed_record = self._process_encryption_placeholders(record, final_encryption_params)
-                    # 【關鍵】將拍平後的資料加入總列表，並傳入該批次的 body_key
-                    all_generated_records.append(self._flatten_dict(processed_record, parent_key=body_key))
+                # `generated_records_batch` 已經是 Python 字典的列表，直接迭代處理即可。
+                for idx, record_dict in enumerate(generated_records_batch):
+                    try:
+                        # 【修復】增加一道防護，確保列表中的元素確實是字典
+                        if not isinstance(record_dict, dict):
+                            self.logger.warning(
+                                f"範例 {i + 1} 的第 {idx + 1} 筆生成資料不是有效的物件(字典)，將跳過。內容: {str(record_dict)[:200]}")
+                            continue
+
+                        # 【修復】直接使用 record_dict，不再需要 json.loads()
+                        processed_record = self._process_encryption_placeholders(record_dict, final_encryption_params)
+
+                        # 將拍平後的資料加入總列表，並傳入該批次的 body_key
+                        all_generated_records.append(self._flatten_dict(processed_record, parent_key=body_key))
+
+                    except Exception as e:
+                        # 將 record_dict 轉為字串再切片，避免對字典切片引發錯誤
+                        self.logger.error(
+                            f"處理範例 {i + 1} 的第 {idx + 1} 筆生成資料時發生未知錯誤: {e}。內容: {str(record_dict)[:200]}",
+                            exc_info=True)
+                        continue
 
             if not all_generated_records:
                 return {"success": False, "error": "所有範例均未能成功生成資料。"}

@@ -95,9 +95,9 @@
                 <label for="userFeedback">回饋或修改建議 (可選)</label>
                 <textarea id="userFeedback" placeholder="若自動生成的 Markdown 規格有誤，請在此輸入修改建議..." rows="4"></textarea>
             </div>
-            <div class="action-buttons markdown-actions">
+            <div class="upload-controls">
                 <button class="btn btn-primary" id="reviewSpecBtn" disabled>校對 Markdown 規格</button>
-                <button class="btn btn-success" id="confirmMarkdownBtn" disabled>確認並生成合成資料</button>
+                <button class="btn btn-accent" id="confirmMarkdownBtn" disabled>確認並生成合成資料</button>
                 <button class="btn btn-outline" id="downloadHeaderBtn" disabled>下載 Header (JSON)</button>
             </div>
         </section>
@@ -116,7 +116,7 @@
             </div>
 
             <!-- 操作按鈕區塊 -->
-            <div class="action-buttons">
+            <div class="upload-controls">
                 <button class="btn btn-primary" id="reviewSyntheticBtn" disabled>校對合成資料</button>
                 <button class="btn btn-outline" id="downloadSyntheticBtn" disabled>下載合成資料 (CSV)</button>
             </div>
@@ -135,6 +135,5 @@
         <button class="notification-close" onclick="hideNotification()">×</button>
     </div>
 
-    <script src="syn-data-gen.js"></script>
 </body>
 </html>
