@@ -1,7 +1,7 @@
 streamlit==1.46.0
 pandas==2.1.4
-ibm-watsonx-ai==1.1.24
-ibm-cloud-sdk-core==3.24.2
+ibm-watsonx-ai>=1.1
+ibm-cloud-sdk-core>=3.24
 fastapi==0.115.4
 uvicorn[standard]==0.32.0
 pydantic==2.10.2
@@ -13,7 +13,7 @@ numpy==1.26.4
 structlog==25.4.0
 httpx==0.28.1
 streamlit-option-menu==0.4.0
-requests==2.32.4
+requests>=2.32
 httpx==0.28.1
 # 圖表和視覺化
 plotly==6.1.2
@@ -30,3 +30,4 @@ pytest-cov==6.2.1
 pytest-mock==3.14.1
 httpx==0.28.1
 python-dotenv==1.0.1
+ibm-cos-sdk-core>=2.12
