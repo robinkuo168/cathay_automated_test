@@ -661,35 +661,6 @@ class SynDataGenService:
             self.logger.error(f"解析 LLM 提取的加密參數時發生未知錯誤: {e}", exc_info=True)
             return None
 
-    def _extract_json_from_header_markdown(self, header_markdown: str) -> Optional[str]:
-        """從包含 Header 範例的 Markdown 字串中提取第一個有效的 JSON 物件字串。"""
-        if not header_markdown:
-            return None
-        # 這個正則表達式會尋找 ```json ... ``` 區塊並捕獲其內容
-        match = re.search(r'```json\s*(\{[\s\S]*?\})\s*```', header_markdown, re.IGNORECASE)
-        if match:
-            json_content = match.group(1)
-            try:
-                # 驗證它是否為有效的 JSON
-                json.loads(json_content)
-                self.logger.info("成功從 Header Markdown 中提取並驗證了 JSON 範例。")
-                return json_content
-            except json.JSONDecodeError:
-                self.logger.warning("在 Header Markdown 中找到了 JSON 區塊，但其內容不是有效的 JSON。")
-                return None
-
-        # 如果沒有找到 ```json 區塊，嘗試將整個字串視為 JSON
-        if header_markdown.strip().startswith('{'):
-            try:
-                json.loads(header_markdown)
-                self.logger.info("Header Markdown 本身就是一個有效的 JSON，直接使用。")
-                return header_markdown
-            except json.JSONDecodeError:
-                pass
-
-        self.logger.warning("未能在 Header Markdown 中找到有效的 JSON 範例。")
-        return None
-
     def _flatten_dict(self, d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
         """將巢狀字典拍平。"""
         items = []
@@ -893,4 +864,3 @@ class SynDataGenService:
         except Exception as e:
             self.logger.error(f"3DES 加密過程中發生錯誤: {e}", exc_info=True)
             raise
-

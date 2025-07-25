@@ -106,19 +106,18 @@ class LLMService:
 
     def generate_text(self, prompt: str, **kwargs) -> str:
         """
-        生成文字內容
-        :param prompt: 提示詞
-        :param kwargs: 可選的生成參數，會覆蓋默認參數
-        :return: 生成的文字
+        生成文字內容。
+        :param prompt: 提示詞。
+        :param kwargs: 可選的生成參數 (例如 temperature, max_new_tokens)，會覆蓋初始化時的預設值。
+        :return: 生成的文字。
         """
         self._ensure_model_initialized()
         try:
-            # 使用傳入的參數或默認參數
-            generate_kwargs = {}
-            if kwargs:
-                generate_kwargs = kwargs
-            
-            response = self.model.generate_text(prompt=prompt, **generate_kwargs)
+            # 【修正】將傳入的 kwargs 作為參數覆蓋字典 (params) 傳遞給底層模型。
+            # 如果沒有傳入 kwargs，則 params 為 None，模型將使用初始化時的預設參數。
+            override_params = kwargs if kwargs else None
+
+            response = self.model.generate_text(prompt=prompt, params=override_params)
             if not response or not response.strip():
                 raise ValueError("模型返回空響應")
             return response

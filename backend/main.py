@@ -23,11 +23,9 @@ from backend.services import JMXGeneratorService, FileProcessorService, LogServi
 from backend.services import ReportAnalysisService, LLMService
 from backend.services import DocumentProcessorService, SynDataGenService
 
-
 def setup_logging():
     """
     在應用程式啟動時設定全域日誌。
-    此函數將設定 Root Logger，所有子 logger 都會繼承此設定。
     """
     # 取得根日誌記錄器
     root_logger = logging.getLogger()
@@ -47,14 +45,13 @@ def setup_logging():
     # 為根日誌記錄器添加 handler
     root_logger.addHandler(handler)
 
-
 # logger 變數的定義可以保留，它會自動從 root logger 繼承設定
 logger = logging.getLogger(__name__)
 
 # 請求追蹤
 request_id_var: ContextVar[str] = ContextVar('request_id', default="unknown")
 
-# 存儲多個 LLMService 實例的字典
+# 存儲 LLMService 實例的字典
 _llm_services = {}
 _llm_services_lock = threading.Lock()
 
@@ -157,7 +154,7 @@ OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# 安全的服務初始化
+# 服務初始化
 try:
     report_analysis_service = None
     file_service = FileProcessorService()
@@ -194,21 +191,19 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# 【修正】使用 on_event 取代 lifespan
 @app.on_event("startup")
 async def startup_event():
     """應用程式啟動事件"""
-    # 【新增】在應用程式啟動時執行日誌設定
     setup_logging()
 
-    logger.info("🚀 JMeter JMX Generator API 啟動中... (日誌系統已設定)")
+    logger.info("JMeter JMX Generator API 啟動中... (日誌系統已設定)")
     if log_service:
         log_service.add_log("INFO", "API 服務啟動")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """應用程式關閉事件"""
-    logger.info("🛑 JMeter JMX Generator API 關閉中...")
+    logger.info("JMeter JMX Generator API 關閉中...")
     if log_service:
         log_service.add_log("INFO", "API 服務關閉")
 
@@ -459,7 +454,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # API 端點
-@app.get("/", response_model=APIResponse)
+@app.get("/api", response_model=APIResponse)
 async def root():
     """根路徑"""
     return create_response(
@@ -472,7 +467,7 @@ async def root():
         }
     )
 
-@app.get("/health", response_model=APIResponse)
+@app.get("/api/health", response_model=APIResponse)
 async def health_check():
     """健康檢查"""
     try:
@@ -564,7 +559,7 @@ async def startup_event():
         )
 
 # JMX 生成端點路徑
-@app.post("/generate-jmx", response_model=JMXResponse)
+@app.post("/api/generate-jmx", response_model=JMXResponse)
 async def generate_jmx(request: JMXRequest):
     """生成 JMX 檔案 - 修正端點路徑"""
     try:
@@ -572,7 +567,7 @@ async def generate_jmx(request: JMXRequest):
         service = get_jmx_service()
         files_data = request.files or []
 
-        jmx_content = service.generate_jmx_with_retry(
+        jmx_content = await service.generate_jmx_with_retry(
             requirements=request.requirements,
             files_data=files_data
         )
@@ -582,7 +577,6 @@ async def generate_jmx(request: JMXRequest):
 
         log_with_request_id("INFO", f"JMX 生成成功，內容長度: {len(jmx_content)}")
 
-        # 【修正】將 content 放在 data 欄位中，並移除多餘的賦值
         return create_response(
             success=True,
             message="JMX 檔案生成成功",
@@ -604,11 +598,10 @@ async def generate_jmx(request: JMXRequest):
             detail=f"JMX 生成失敗: {error_msg}"
         )
 
-@app.post("/upload")
+@app.post("/api/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
     """
     檔案上傳端點。
-    此版本已修正，會將檔案內容解碼為字串並回傳給前端。
     """
     try:
         log_with_request_id("INFO", f"開始上傳 {len(files)} 個檔案")
@@ -627,10 +620,10 @@ async def upload_files(files: List[UploadFile] = File(...)):
                     })
                     continue
 
-                # 1. 將檔案內容讀取為二進位 (bytes)
+                # 1. 將檔案內容讀取為 bytes
                 content_bytes = await file.read()
 
-                # 2. 檢查檔案大小 (使用二進位內容的長度)
+                # 2. 檢查檔案大小
                 if len(content_bytes) > 10 * 1024 * 1024:  # 10MB
                     failed_files.append({
                         "filename": file.filename,
@@ -638,7 +631,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
                     })
                     continue
 
-                # --- 檔案儲存邏輯 (保持不變) ---
+                # --- 檔案儲存 ---
                 file_path = UPLOAD_DIR / file.filename
                 if file_path.exists():
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -649,17 +642,16 @@ async def upload_files(files: List[UploadFile] = File(...)):
                 with open(file_path, "wb") as buffer:
                     buffer.write(content_bytes)
 
-                # 3. 將二進位內容解碼為字串 (str) 以便放入 JSON
+                # 3. 將 bytes 內容解碼為字串 (str) 以便放入 JSON
                 content_str = None
                 try:
-                    # 嘗試使用 UTF-8 解碼，這是最常見的網頁與文字檔編碼
+                    # 使用 UTF-8 解碼
                     content_str = content_bytes.decode('utf-8')
                 except UnicodeDecodeError:
-                    # 如果檔案不是 UTF-8 (例如 Big5 或二進位檔)，解碼會失敗
-                    # 在此情況下，我們記錄警告，並讓 content_str 保持為 None
+                    # 如果檔案不是 UTF-8
                     log_with_request_id("WARNING", f"檔案 {file.filename} 不是有效的 UTF-8 編碼，其內容將不會回傳。")
 
-                # 4. 【核心修正】在回傳的資料中，使用解碼後的字串 `content_str`
+                # 4. 在回傳的資料中，使用解碼後的字串 `content_str`
                 uploaded_files.append({
                     "filename": file.filename,
                     "saved_as": file_path.name,
@@ -667,16 +659,16 @@ async def upload_files(files: List[UploadFile] = File(...)):
                     "path": str(file_path),
                     "type": file_extension,
                     "status": "success",
-                    "data": content_str  # <--- 關鍵修正！
+                    "data": content_str
                 })
-                log_with_request_id("INFO", f"✅ 檔案上傳成功: {file.filename}")
+                log_with_request_id("INFO", f"檔案上傳成功: {file.filename}")
 
             except Exception as e:
                 failed_files.append({
                     "filename": file.filename,
                     "error": str(e)
                 })
-                log_with_request_id("ERROR", f"❌ 檔案上傳失敗: {file.filename} - {str(e)}")
+                log_with_request_id("ERROR", f"檔案上傳失敗: {file.filename} - {str(e)}")
 
         total_files = len(files)
         success_count = len(uploaded_files)
@@ -705,11 +697,11 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
     except Exception as e:
         error_msg = str(e)
-        log_with_request_id("ERROR", f"❌ 檔案上傳處理失敗: {error_msg}")
+        log_with_request_id("ERROR", f"檔案上傳處理失敗: {error_msg}")
         logger.error(f"檔案上傳處理失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"上傳處理失敗: {error_msg}")
 
-@app.post("/validate", response_model=ValidationResponse)
+@app.post("/api/validate", response_model=ValidationResponse)
 async def validate_xml(request: XMLValidationRequest):
     """驗證 XML 格式"""
     try:
@@ -720,7 +712,7 @@ async def validate_xml(request: XMLValidationRequest):
 
         log_with_request_id("INFO", f"XML 驗證完成: {'有效' if is_valid else '無效'}")
 
-        # 【修正】將所有相關資料放在 data 欄位中，並移除多餘的 update
+        # 將所有相關資料放在 data 欄位中
         return create_response(
             success=True,
             message="XML 驗證完成",
@@ -737,7 +729,7 @@ async def validate_xml(request: XMLValidationRequest):
         logger.error(f"XML 驗證失敗: {e}", exc_info=True)
 
         return JSONResponse(
-            status_code=200, # 即使驗證失敗，請求本身是成功的
+            status_code=200,
             content=create_response(
                 success=False,
                 message="XML 驗證失敗",
@@ -747,7 +739,7 @@ async def validate_xml(request: XMLValidationRequest):
         )
 
 # 報告分析相關端點
-@app.post("/preview-analysis", response_model=APIResponse)
+@app.post("/api/preview-analysis", response_model=APIResponse)
 async def preview_analysis(file: UploadFile = File(...)):
     """預覽分析報告"""
     try:
@@ -814,7 +806,7 @@ async def preview_analysis(file: UploadFile = File(...)):
             detail=f"分析失敗: {error_msg}"
         )
 
-@app.post("/analyze-performance-report")
+@app.post("/api/analyze-performance-report")
 async def analyze_performance_report(file: UploadFile = File(...)):
     """生成完整的效能分析報告"""
     try:
@@ -909,9 +901,6 @@ async def analyze_performance_report(file: UploadFile = File(...)):
             except Exception as e:
                 logger.warning(f"清理臨時上傳檔案失敗: {e}")
 
-            # 注意：輸出檔案的清理已移至 iterfile 函數中，以確保在檔案傳輸完成後才刪除。
-            # 之前的 threading.sleep 方法不夠可靠。
-
     except HTTPException:
         raise
     except Exception as e:
@@ -924,7 +913,7 @@ async def analyze_performance_report(file: UploadFile = File(...)):
         )
 
 # 獲取系統日誌端點
-@app.get("/logs", response_model=LogsResponse)
+@app.get("/api/logs", response_model=LogsResponse)
 async def get_logs(limit: int = 100):
     """獲取系統日誌"""
     try:
@@ -934,7 +923,7 @@ async def get_logs(limit: int = 100):
                 detail="日誌服務不可用"
             )
 
-        logs = log_service.get_recent_logs(limit)
+        logs = log_service.get_logs(limit)
 
         return create_response(
             success=True,
@@ -954,7 +943,7 @@ async def get_logs(limit: int = 100):
         )
 
 # 處理 .docx 文件並提取文字
-@app.post("/process-docx", response_model=APIResponse)
+@app.post("/api/process-docx", response_model=APIResponse)
 async def process_docx(file: UploadFile = File(...)):
     """處理上傳的 .docx 文件並提取文字內容"""
     try:
@@ -968,14 +957,14 @@ async def process_docx(file: UploadFile = File(...)):
                 detail="請上傳 .docx 格式的檔案"
             )
 
-        # 【修復點】確保在檢查大小和呼叫服務前，先讀取檔案內容
+        # 確保在檢查大小和呼叫服務前，先讀取檔案內容
         content = await file.read()
 
-        # 檢查檔案大小 (限制 20MB)
-        if len(content) > 20 * 1024 * 1024:
+        # 檢查檔案大小 (限制 10MB)
+        if len(content) > 10 * 1024 * 1024:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="檔案大小不能超過 20MB"
+                detail="檔案大小不能超過 10MB"
             )
 
         # 獲取服務實例
@@ -993,7 +982,7 @@ async def process_docx(file: UploadFile = File(...)):
             data={"text": extracted_text}
         )
 
-    except ValueError as e: # 捕獲服務層拋出的特定業務錯誤
+    except ValueError as e:
         log_with_request_id("ERROR", f"處理 .docx 檔案時發生業務錯誤: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1011,7 +1000,7 @@ async def process_docx(file: UploadFile = File(...)):
         )
 
 # 從文件內容生成 Markdown 表格
-@app.post("/generate-markdown", response_model=SpecAnalysisResponse)
+@app.post("/api/generate-markdown", response_model=SpecAnalysisResponse)
 async def generate_markdown(text_data: dict):
     """
     從文件內容中同時提取 Header JSON 範例和 Body Markdown 表格。
@@ -1031,7 +1020,7 @@ async def generate_markdown(text_data: dict):
         # 獲取服務實例
         spec_service = get_spec_analysis_service()
 
-        # 【核心修改】使用 asyncio.gather 並行執行兩個任務
+        # 使用 asyncio.gather 並行執行兩個任務
         header_task = spec_service.generate_header_json_from_doc(text, filename)
         body_task = spec_service.generate_body_markdown_from_doc(text, filename)
 
@@ -1057,7 +1046,7 @@ async def generate_markdown(text_data: dict):
             data=response_data
         )
 
-    except ValueError as e: # 捕獲我們自己拋出的業務邏輯錯誤
+    except ValueError as e:
         log_with_request_id("ERROR", f"規格提取失敗 (ValueError): {str(e)}")
         raise HTTPException(
             status_code=400,
@@ -1075,7 +1064,7 @@ async def generate_markdown(text_data: dict):
         )
 
 # 校對 Markdown 表格
-@app.post("/review-markdown", response_model=APIResponse)
+@app.post("/api/review-markdown", response_model=APIResponse)
 async def review_markdown(request: MarkdownReviewRequest):
     """校對 Markdown 表格"""
     try:
@@ -1117,7 +1106,7 @@ async def review_markdown(request: MarkdownReviewRequest):
         )
 
 # 校對 JSON Header
-@app.post("/review-header-json", response_model=APIResponse)
+@app.post("/api/review-header-json", response_model=APIResponse)
 async def review_header_json(request: HeaderJsonReviewRequest):
     """
     根據使用者輸入，校對包含 Header JSON 範例的 Markdown 字串。
@@ -1162,7 +1151,7 @@ async def review_header_json(request: HeaderJsonReviewRequest):
         )
 
 # 校對合成資料
-@app.post("/review-synthetic-data", response_model=APIResponse)
+@app.post("/api/review-synthetic-data", response_model=APIResponse)
 async def review_synthetic_data(request: SyntheticDataReviewRequest):
     """
     根據使用者輸入，校對已生成的合成資料。
@@ -1209,16 +1198,14 @@ async def run_synthetic_data_generation(task_id: str, body_markdown: str, header
         spec_service = get_spec_analysis_service()
         log_with_request_id("INFO", f"背景任務 {task_id} 開始生成 {num_rows} 筆資料...")
 
-        # ▼▼▼【核心修改】▼▼▼
         # 將 full_doc_text 傳遞給服務函式
         result = await spec_service.generate_data_from_markdown(
             body_markdown=body_markdown,
             header_json_markdown=header_json_markdown,
-            full_doc_text=full_doc_text,  # <<< 傳遞新參數
+            full_doc_text=full_doc_text,
             context_id=filename,
             num_records=num_rows
         )
-        # ▲▲▲【核心修改】▲▲▲
 
         if not result.get("success"):
             raise Exception(result.get("error", "未知錯誤"))
@@ -1245,7 +1232,7 @@ async def run_synthetic_data_generation(task_id: str, body_markdown: str, header
         tasks[task_id] = {"status": "error", "error": str(e)}
 
 # 1: 啟動任務
-@app.post("/start-synthetic-data-task", response_model=APIResponse)
+@app.post("/api/start-synthetic-data-task", response_model=APIResponse)
 async def start_generation_task(request_data: TaskStartRequest, background_tasks: BackgroundTasks):
     """
     接收請求，立即返回 task_id，並在背景啟動耗時的生成任務。
@@ -1289,7 +1276,7 @@ async def start_generation_task(request_data: TaskStartRequest, background_tasks
         )
 
 # 2: 查詢狀態
-@app.get("/get-task-status/{task_id}")
+@app.get("/api/get-task-status/{task_id}")
 async def get_task_status(task_id: str):
     """
     根據 task_id 查詢任務的當前狀態。

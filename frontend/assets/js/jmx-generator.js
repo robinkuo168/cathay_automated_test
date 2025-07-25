@@ -1,5 +1,5 @@
 // frontend/jmx-generator.js
-//const API_BASE = 'http://localhost:8000';
+//const API_BASE = 'http://localhost:8000/api';
 const API_BASE = '/api';
 
 let uploadedFiles = [];
@@ -63,17 +63,23 @@ function initializeEventListeners() {
 
     // 拖拽上傳
     setupDragAndDrop();
+
+    // ▼▼▼【核心新增】▼▼▼
+    // 為檔案列表（包含待上傳和已上傳）新增事件代理，處理移除按鈕的點擊
+    elements.fileList.addEventListener('click', handleRemoveFile);
+    elements.uploadStatus.addEventListener('click', handleRemoveFile);
+    // ▲▲▲【核心新增】▲▲▲
 }
 
 function handleFileSelection(event) {
-    const files = Array.from(event.target.files);
+    const newFiles = Array.from(event.target.files);
 
     // 過濾只允許 CSV 和 JSON 檔案
     const allowedExtensions = ['.csv', '.json'];
     const validFiles = [];
     const invalidFiles = [];
 
-    files.forEach(file => {
+    newFiles.forEach(file => {
         const fileName = file.name.toLowerCase();
         const isValid = allowedExtensions.some(ext => fileName.endsWith(ext));
 
@@ -89,14 +95,25 @@ function handleFileSelection(event) {
         showStatus(`❌ 不支援的檔案格式: ${invalidFiles.join(', ')}。僅支援 CSV 和 JSON 檔案`, 'error');
     }
 
-    // 只保留有效檔案
-    selectedFiles = validFiles;
+    // --- 【核心修改】合併新舊檔案選擇，並過濾重複項 ---
+    // 1. 取得現有已選擇檔案的檔名 Set，方便快速查找
+    const existingFilenames = new Set(selectedFiles.map(f => f.name));
+
+    // 2. 過濾掉本次選擇中檔名已經存在的檔案
+    const filesToAdd = validFiles.filter(file => !existingFilenames.has(file.name));
+
+    // 3. 將新的、不重複的檔案附加到現有選擇列表
+    if (filesToAdd.length > 0) {
+        selectedFiles = selectedFiles.concat(filesToAdd);
+        showStatus(`已新增 ${filesToAdd.length} 個檔案至待上傳列表`, 'info');
+    } else if (validFiles.length > 0) {
+        // 如果有選擇有效檔案，但都是重複的
+        showStatus('選擇的檔案已在列表中', 'warning');
+    }
+    // --- 核心修改結束 ---
+
     displaySelectedFiles();
     updateButtonStates();
-
-    if (validFiles.length > 0) {
-        showStatus(`已選擇 ${validFiles.length} 個有效檔案`, 'info');
-    }
 }
 
 function displaySelectedFiles() {
@@ -105,21 +122,28 @@ function displaySelectedFiles() {
         return;
     }
 
+    // ▼▼▼【核心修改】▼▼▼
+    // 為每個檔案項目新增一個移除按鈕
     const fileListHtml = selectedFiles.map(file => `
         <div class="file-item selected">
-            <span class="file-name">${file.name}</span>
-            <span class="file-size">${formatFileSize(file.size)}</span>
+            <div class="file-details">
+                <span class="file-name">${file.name}</span>
+                <span class="file-size">${formatFileSize(file.size)}</span>
+            </div>
             <span class="file-status">待上傳</span>
+            <button class="remove-file-btn" data-filename="${file.name}" title="移除此檔案">✕</button>
         </div>
     `).join('');
+    // ▲▲▲【核心修改】▲▲▲
 
     elements.fileList.innerHTML = `
-        <h4>📋 已選擇的檔案:</h4>
+        <h4>📋 待上傳的檔案:</h4>
         ${fileListHtml}
     `;
 }
 
 function clearSelectedFiles() {
+    // 這個函式實際上是一個「重置」功能，會清除所有選擇、上傳和結果。
     selectedFiles = [];
     elements.fileInput.value = '';
     elements.fileList.innerHTML = '';
@@ -128,7 +152,7 @@ function clearSelectedFiles() {
 
     elements.requirements.value = '';
     updateCharCount(); // 更新字符計數
-    
+
     // 清除 JMX 結果
     elements.resultSection.style.display = 'none';
     elements.jmxOutput.textContent = '';
@@ -138,6 +162,10 @@ function clearSelectedFiles() {
     showStatus('已清除所有檔案選擇、測試需求和 JMX 結果', 'info');
 }
 
+/**
+ * 【核心修改】上傳檔案函式
+ * - 現在會將新上傳的檔案與已有的檔案合併，而不是覆蓋。
+ */
 async function uploadFiles() {
     if (selectedFiles.length === 0) {
         showStatus('請先選擇檔案', 'error');
@@ -162,14 +190,36 @@ async function uploadFiles() {
 
         const result = await response.json();
 
-        if (result.success) {
-            uploadedFiles = result.data.files || [];
-            showStatus(`✅ 成功上傳 ${result.data.processed} 個檔案`, 'success');
-            displayUploadedFiles(result.data);
+        if (result.success && result.data) {
+            const newlyUploaded = result.data.files || [];
+            const failedUploads = result.data.failed_files || [];
+
+            // --- 核心修改：合併新舊檔案 ---
+            // 1. 取得新上傳成功檔案的檔名列表
+            const newFilenames = new Set(newlyUploaded.map(f => f.filename));
+
+            // 2. 從現有的 uploadedFiles 中，過濾掉與本次上傳檔名重複的舊檔案
+            const oldFilesToKeep = uploadedFiles.filter(f => !newFilenames.has(f.filename));
+
+            // 3. 合併舊檔案和新檔案
+            uploadedFiles = oldFilesToKeep.concat(newlyUploaded);
+            // --- 核心修改結束 ---
+
+            // 顯示成功和失敗訊息
+            let successMsg = `✅ 成功上傳 ${result.data.processed} 個檔案。`;
+            if (failedUploads.length > 0) {
+                successMsg += ` ${failedUploads.length} 個檔案失敗。`;
+            }
+            showStatus(successMsg, 'success');
+
+            // 重新渲染整個已上傳檔案列表
+            renderUploadedFiles(failedUploads);
 
             // 清除已選擇的檔案（但保留上傳成功的記錄）
             selectedFiles = [];
             elements.fileInput.value = '';
+            displaySelectedFiles(); // 清空選擇列表
+
         } else {
             showStatus(`❌ 上傳失敗: ${result.error}`, 'error');
         }
@@ -183,25 +233,36 @@ async function uploadFiles() {
     }
 }
 
-function displayUploadedFiles(uploadData) {
+/**
+ * 【核心修改】渲染已上傳檔案列表的函式
+ * - 此函式現在會根據全域的 uploadedFiles 陣列，重新渲染整個列表。
+ * @param {Array} failedUploads - (可選) 本次上傳失敗的檔案列表，用於一併顯示。
+ */
+function renderUploadedFiles(failedUploads = []) {
     let html = '';
 
-    // 成功上傳的檔案
-    if (uploadData.files && uploadData.files.length > 0) {
+    // 顯示所有成功上傳的檔案
+    if (uploadedFiles.length > 0) {
         html += '<h4>✅ 已上傳檔案:</h4>';
-        html += uploadData.files.map(file => `
+        // ▼▼▼【核心修改】▼▼▼
+        // 為每個已上傳的檔案項目新增一個移除按鈕
+        html += uploadedFiles.map(file => `
             <div class="file-item uploaded">
-                <span class="file-name">${file.filename}</span>
-                <span class="file-size">${formatFileSize(file.size)}</span>
+                <div class="file-details">
+                    <span class="file-name">${file.filename}</span>
+                    <span class="file-size">${formatFileSize(file.size)}</span>
+                </div>
                 <span class="file-status success">上傳成功</span>
+                <button class="remove-file-btn" data-filename="${file.filename}" title="移除此檔案">✕</button>
             </div>
         `).join('');
+        // ▲▲▲【核心修改】▲▲▲
     }
 
-    // 失敗的檔案
-    if (uploadData.failed_files && uploadData.failed_files.length > 0) {
-        html += '<h4>❌ 上傳失敗:</h4>';
-        html += uploadData.failed_files.map(file => `
+    // 如果本次上傳有失敗的檔案，也一併顯示
+    if (failedUploads.length > 0) {
+        html += '<h4>❌ 本次上傳失敗:</h4>';
+        html += failedUploads.map(file => `
             <div class="file-item failed">
                 <span class="file-name">${file.filename}</span>
                 <span class="file-error">${file.error}</span>
@@ -211,6 +272,48 @@ function displayUploadedFiles(uploadData) {
 
     elements.uploadStatus.innerHTML = html;
 }
+
+/**
+ * 【核心新增】處理單一檔案移除的函式
+ * @param {Event} event - 點擊事件
+ */
+function handleRemoveFile(event) {
+    // 使用 .closest() 確保即使點擊到按鈕內的圖標也能正確觸發
+    const removeButton = event.target.closest('.remove-file-btn');
+    if (!removeButton) {
+        return; // 如果點擊的不是移除按鈕，則不執行任何操作
+    }
+
+    const filenameToRemove = removeButton.dataset.filename;
+    if (!filenameToRemove) return;
+
+    // 標記是否有檔案被移除
+    let fileRemoved = false;
+
+    // 嘗試從「待上傳列表」中移除
+    const initialSelectedCount = selectedFiles.length;
+    selectedFiles = selectedFiles.filter(file => file.name !== filenameToRemove);
+    if (selectedFiles.length < initialSelectedCount) {
+        displaySelectedFiles(); // 重新渲染待上傳列表
+        fileRemoved = true;
+    }
+
+    // 嘗試從「已上傳列表」中移除
+    const initialUploadedCount = uploadedFiles.length;
+    uploadedFiles = uploadedFiles.filter(file => file.filename !== filenameToRemove);
+    if (uploadedFiles.length < initialUploadedCount) {
+        renderUploadedFiles(); // 重新渲染已上傳列表
+        fileRemoved = true;
+    }
+
+    if (fileRemoved) {
+        // 更新按鈕狀態
+        updateButtonStates();
+        // 顯示通知
+        showStatus(`✅ 已移除檔案: ${filenameToRemove}`, 'success');
+    }
+}
+
 
 async function generateJMX() {
     const requirements = elements.requirements.value.trim();
@@ -327,7 +430,7 @@ function downloadJMX() {
     a.href = url;
     a.download = `test-plan-${new Date().getTime()}.jmx`;
     document.body.appendChild(a);
-    a.click();
+a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 

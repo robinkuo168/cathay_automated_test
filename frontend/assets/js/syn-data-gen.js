@@ -1,4 +1,4 @@
-//const API_BASE = 'http://localhost:8000';
+//const API_BASE = 'http://localhost:8000/api';
 const API_BASE = '/api';
 
 // 全域變數
@@ -127,6 +127,48 @@ function initializeUploadZone() {
     });
 }
 
+/**
+ * 從 headerJsonData 中提取 MSGID 作為檔名。
+ * @param {string} extension - 檔案的副檔名 (例如 'json' 或 'csv')。
+ * @param {string} defaultFilename - 如果找不到 MSGID 時的預設檔名。
+ * @returns {string} - 生成的檔名。
+ */
+function getFilenameFromMsgId(extension, defaultFilename) {
+    // 如果沒有 header 資料，直接返回預設檔名
+    if (!headerJsonData) {
+        return defaultFilename;
+    }
+
+    // 處理 headerJsonData 可能是物件或陣列的情況
+    const firstItem = Array.isArray(headerJsonData) ? headerJsonData[0] : headerJsonData;
+
+    if (!firstItem || typeof firstItem !== 'object') {
+        return defaultFilename;
+    }
+
+    // 增加對巢狀結構的支援，例如 { "MWHEADER": { "MSGID": "..." } }
+    let msgId = null;
+
+    // 策略一：直接在頂層尋找 MSGID
+    if (firstItem.MSGID) {
+        msgId = firstItem.MSGID;
+    }
+    // 策略二：如果頂層沒有，則在 MWHEADER 物件中尋找
+    else if (firstItem.MWHEADER && typeof firstItem.MWHEADER === 'object' && firstItem.MWHEADER.MSGID) {
+        msgId = firstItem.MWHEADER.MSGID;
+    }
+
+    // 檢查是否成功找到 MSGID
+    if (msgId) {
+        // 清理 MSGID，移除可能導致檔名無效的特殊字元
+        const safeMsgId = String(msgId).replace(/[^a-z0-9_-]/gi, '_');
+        return `${safeMsgId}.${extension}`;
+    }
+
+    // 如果找不到 MSGID，返回預設檔名
+    return defaultFilename;
+}
+
 function initializeFileInput() {
     console.log('初始化檔案輸入...');
     const fileInput = document.getElementById('fileInput');
@@ -155,7 +197,6 @@ function initializeFileInput() {
         });
     }
 
-    // 【核心修改】簡化「校對 Markdown 規格」按鈕的邏輯
     if (elements.reviewSpecBtn) {
         elements.reviewSpecBtn.addEventListener('click', () => {
             console.log("--- 「校對 Markdown 規格」按鈕點擊事件觸發 ---");
@@ -166,7 +207,6 @@ function initializeFileInput() {
                 return;
             }
 
-            // 直接從 Markdown 編輯器獲取內容
             const markdown = markdownEditor.getValue();
             if (markdown.trim().length > 0) {
                 console.log("準備呼叫 reviewMarkdownTable API...");
@@ -187,13 +227,16 @@ function initializeFileInput() {
         });
     }
 
+    // ▼▼▼【核心修正】▼▼▼
     if (elements.downloadHeaderBtn) {
         elements.downloadHeaderBtn.addEventListener('click', () => {
             if (headerJsonData) {
+                // 使用輔助函式動態生成檔名
+                const filename = getFilenameFromMsgId('json', 'api_examples.json');
                 const dataToDownload = Array.isArray(headerJsonData) ? headerJsonData : [headerJsonData];
                 const jsonString = JSON.stringify(dataToDownload, null, 2);
-                downloadTextAsFile(jsonString, 'api_examples.json', 'application/json');
-                showNotification('結構化 JSON 下載開始', 'success');
+                downloadTextAsFile(jsonString, filename, 'application/json');
+                showNotification(`結構化 JSON (${filename}) 下載開始`, 'success');
             } else {
                 showNotification('沒有可下載的範例資料', 'error');
             }
@@ -204,13 +247,16 @@ function initializeFileInput() {
     if (downloadSyntheticBtn) {
         downloadSyntheticBtn.addEventListener('click', () => {
             if (syntheticDataCsv) {
-                downloadTextAsFile(syntheticDataCsv, 'synthetic_data.csv', 'text/csv');
-                showNotification('合成資料 CSV 下載開始', 'success');
+                // 使用輔助函式動態生成檔名
+                const filename = getFilenameFromMsgId('csv', 'synthetic_data.csv');
+                downloadTextAsFile(syntheticDataCsv, filename, 'text/csv');
+                showNotification(`合成資料 CSV (${filename}) 下載開始`, 'success');
             } else {
                 showNotification('沒有可下載的合成資料', 'error');
             }
         });
     }
+    // ▲▲▲【核心修正】▲▲▲
 
     if (elements.userFeedback) {
         elements.userFeedback.addEventListener('input', updateButtonStates);
@@ -345,34 +391,6 @@ function removeSelectedFile() {
     updateButtonStates();
     updateStatus('就緒');
     showNotification('已移除檔案', 'info');
-}
-
-function clearSelectedFiles() {
-    console.log('清除選擇的檔案');
-    removeSelectedFile();
-
-    // Reset UI elements
-    if (syntheticDataEditor) {
-        syntheticDataEditor.setValue('');
-    }
-
-    if (elements.userFeedback) {
-        elements.userFeedback.value = '';
-    }
-
-    if (elements.generateMarkdownBtn) {
-        elements.generateMarkdownBtn.style.display = 'none';
-    }
-
-    if (elements.specAnalysisSection) {
-        elements.specAnalysisSection.style.display = 'none'; // 隱藏分析區塊
-    }
-
-    if (elements.syntheticSection) {
-        elements.syntheticSection.style.display = 'none'; // 隱藏合成資料區塊
-    }
-
-    updateStatus('已清除檔案，可以重新開始');
 }
 
 async function uploadAndProcessFile(file) {
@@ -575,43 +593,6 @@ async function reviewMarkdownTable(markdown, userInput) {
         alert(`校對 Markdown 表格失敗: ${error.message}`);
     } finally {
         updateButtonStates();
-    }
-}
-
-async function reviewHeaderJson(headerMarkdown, userInput) {
-    updateStatus('正在校對 Header JSON...');
-    elements.reviewSpecBtn.disabled = true;
-
-    try {
-        const response = await fetch(`${API_BASE}/review-header-json`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                header_markdown: headerMarkdown,
-                user_input: userInput
-            })
-        });
-        if (!response.ok) throw new Error(`HTTP 錯誤: ${response.status}`);
-
-        const result = await response.json();
-
-        // 後端回傳的結構是 { success: true, data: { filename: ..., type: ..., data: { header_markdown: "..." } } }
-        const newHeaderContent = result.data?.data?.header_markdown;
-
-        if (result.success && typeof newHeaderContent === 'string') {
-            headerJsonData = newHeaderContent;
-            headerEditor.setValue(newHeaderContent);
-            updateStatus('Header JSON 校對完成');
-            showNotification('Header JSON 已更新', 'success');
-        } else {
-            throw new Error(result.error || '從後端回應中找不到有效的 Header JSON 內容');
-        }
-    } catch (error) {
-        console.error('校對 Header JSON 錯誤:', error);
-        updateStatus(`校對 Header JSON 失敗: ${error.message}`);
-        alert(`校對 Header JSON 失敗: ${error.message}`);
-    } finally {
-        updateButtonStates(); // 使用 updateButtonStates 來恢復按鈕狀態
     }
 }
 
@@ -855,47 +836,4 @@ function formatFileSize(bytes) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-/**
- * 將包含多個 JSON 範例的 Markdown 字串轉換為結構化的 JSON 陣列。
- * @param {string} markdownString - 來源 Markdown 字串。
- * @returns {Array<Object>} - 包含標題和請求內容的物件陣列。
- */
-function convertMarkdownToJson(markdownString) {
-    const requestBodies = [];
-
-    // 正規表示法維持不變，它能有效地從兩種格式中提取出 JSON 內容
-    const regex = /(?:###\s*(.*?)\s*)?```json\n([\s\S]*?)\n```/g;
-
-    let match;
-    while ((match = regex.exec(markdownString)) !== null) {
-        // 捕獲組 2 (match[2]) 永遠是 JSON 的內容字串
-        const jsonContentString = match[2].trim();
-
-        // 如果 JSON 內容為空，則跳過
-        if (jsonContentString === '') continue;
-
-        try {
-            const requestBody = JSON.parse(jsonContentString);
-
-            requestBodies.push(requestBody);
-        } catch (error) {
-            // 如果解析失敗，在主控台顯示警告，並跳過這個無效的區塊
-            // 這樣可以確保回傳的陣列中只包含有效的 JSON 物件
-            console.warn(`解析某個 JSON 區塊時發生錯誤，已跳過。錯誤訊息:`, error);
-        }
-    }
-
-    // 如果遍歷後沒有結果，但輸入內容看起來像一個 JSON 物件
-    if (requestBodies.length === 0 && markdownString.trim().startsWith('{')) {
-        try {
-            const requestBody = JSON.parse(markdownString);
-            requestBodies.push(requestBody);
-        } catch (e) {
-            console.warn("嘗試將整個內容作為單一 JSON 解析失敗:", e);
-        }
-    }
-
-    return requestBodies;
 }
