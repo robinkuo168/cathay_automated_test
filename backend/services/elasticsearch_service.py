@@ -15,19 +15,13 @@ from langchain_elasticsearch import ElasticsearchStore
 from langchain_ibm import WatsonxEmbeddings
 from ibm_watsonx_ai.metanames import EmbedTextParamsMetaNames
 from dotenv import load_dotenv
-# ▼▼▼【核心修正 1】▼▼▼
-# 參照 jmx_generator.py 的用法，匯入專案的日誌記錄器。
-# 這裡假設您有一個 `backend/services/logger.py` 檔案提供 get_logger 函式。
-# 如果沒有，請將下一行改為 `import logging`。
 from .logger import get_logger
 
 load_dotenv()
 
+
 class ElasticsearchService:
     def __init__(self, embedding_model: str = "ibm/slate-30m-english-rtrvr-v2"):
-        # ▼▼▼【核心修正 2】▼▼▼
-        # 在初始化時建立一個專屬於此服務的 logger 實例，並存儲為 self.logger。
-        # 如果上方匯入的是 logging，請將此行改為 `self.logger = logging.getLogger(__name__)`。
         self.logger = get_logger(__name__)
 
         # 從環境變數讀取 Elasticsearch 設定
@@ -35,10 +29,30 @@ class ElasticsearchService:
         ES_PORT = int(os.getenv("ES_PORT", 31041))
         ES_USERNAME = os.getenv("ES_USERNAME")
         ES_PASSWORD = os.getenv("ES_PASSWORD")
-        CERT_PATH = os.getenv("ES_CERT_PATH")
 
-        if not all([ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD, CERT_PATH]):
+        # ▼▼▼【核心修正 1：動態計算絕對路徑】▼▼▼
+        # 1. 獲取 .env 中設定的相對路徑
+        relative_cert_path = os.getenv("ES_CERT_PATH")
+
+        if not all([ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD, relative_cert_path]):
             raise ValueError("Elasticsearch 的環境變數未完整設定！")
+
+        # 2. 根據當前檔案 (__file__) 的位置，計算出專案根目錄
+        #    - Path(__file__) -> .../backend/services/elasticsearch_service.py
+        #    - .parent -> .../backend/services/
+        #    - .parent -> .../backend/
+        #    - .parent -> .../ (專案根目錄)
+        project_root = Path(__file__).parent.parent.parent
+
+        # 3. 將專案根目錄與相對路徑結合，得到絕對路徑
+        CERT_PATH = project_root / relative_cert_path
+
+        self.logger.info(f"憑證檔案的絕對路徑解析為: {CERT_PATH}")
+        if not CERT_PATH.exists():
+            # 在初始化時就檢查檔案是否存在，提前失敗
+            self.logger.error(f"嚴重錯誤：在路徑 '{CERT_PATH}' 找不到 Elasticsearch 憑證檔案！")
+            raise FileNotFoundError(f"在路徑 '{CERT_PATH}' 找不到 Elasticsearch 憑證檔案！")
+        # ▲▲▲【核心修正 1 結束】▲▲▲
 
         # Elasticsearch connection URL for ElasticsearchStore
         self.es_url = f"https://{ES_USERNAME}:{ES_PASSWORD}@{ES_HOST}:{ES_PORT}"
@@ -51,7 +65,7 @@ class ElasticsearchService:
                 "scheme": "https"
             }],
             basic_auth=(ES_USERNAME, ES_PASSWORD),
-            ca_certs=CERT_PATH,
+            ca_certs=str(CERT_PATH),  # 使用絕對路徑
             verify_certs=True
         )
 
@@ -61,7 +75,7 @@ class ElasticsearchService:
             EmbedTextParamsMetaNames.RETURN_OPTIONS: {"input_text": True},
         }
 
-        # 從環境變數讀取 Watsonx.ai 的設定，而不是硬式編碼
+        # 從環境變數讀取 Watsonx.ai 的設定
         self.embeddings = WatsonxEmbeddings(
             model_id=embedding_model,
             url=os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
@@ -85,14 +99,16 @@ class ElasticsearchService:
         """Test Elasticsearch connection"""
         try:
             info = self.client.info()
-            # ▼▼▼【核心修正 3】▼▼▼
-            # 將 print() 替換為標準的日誌記錄
             self.logger.info(f"✅ Connected to Elasticsearch: {info['version']['number']}")
             return True
         except Exception as e:
             self.logger.error(f"❌ Failed to connect to Elasticsearch: {e}")
-            return False
+            # ▼▼▼【核心修正 2：確保異常被拋出】▼▼▼
+            # 不再只回傳 False，而是將原始異常重新拋出，以便上層 (main.py) 可以捕捉到。
+            raise e
+            # ▲▲▲【核心修正 2 結束】▲▲▲
 
+    # ... (檔案中其餘的函式保持不變) ...
     def get_vector_store(self, index_name: str) -> ElasticsearchStore:
         """Get or create ElasticsearchStore instance for given index"""
         if index_name not in self.vector_stores:
@@ -268,18 +284,21 @@ class ElasticsearchService:
                         body={"ids": doc_ids},
                         _source=False
                     )
-                    existing_ids = {doc_response["_id"] for doc_response in response["docs"] if doc_response.get("found", False)}
+                    existing_ids = {doc_response["_id"] for doc_response in response["docs"] if
+                                    doc_response.get("found", False)}
                     new_documents = [doc for doc, doc_id in zip(documents, doc_ids) if doc_id not in existing_ids]
                     new_doc_ids = [doc_id for doc_id in doc_ids if doc_id not in existing_ids]
                     if new_documents:
                         vector_store.add_documents(new_documents, ids=new_doc_ids)
-                        self.logger.info(f"✅ Added {len(new_documents)} new documents (skipped {len(existing_ids)} existing)")
+                        self.logger.info(
+                            f"✅ Added {len(new_documents)} new documents (skipped {len(existing_ids)} existing)")
                         return True
                     else:
                         self.logger.info("ℹ️  No new documents to add - all documents already exist")
                         return True
                 except Exception as e:
-                    self.logger.warning(f"Index '{index_name}' doesn't exist yet or mget failed, adding all documents. Error: {e}")
+                    self.logger.warning(
+                        f"Index '{index_name}' doesn't exist yet or mget failed, adding all documents. Error: {e}")
                     vector_store.add_documents(documents, ids=doc_ids)
                     return True
             else:
@@ -349,15 +368,6 @@ class ElasticsearchService:
             self.logger.error(f"❌ Search with score failed: {e}")
             return []
 
-    def search_with_score(self, query: str, index_name: str, k: int = 5) -> List[tuple]:
-        """Search documents with similarity scores"""
-        try:
-            vector_store = self.get_vector_store(index_name)
-            return vector_store.similarity_search_with_score(query, k=k)
-        except Exception as e:
-            self.logger.error(f"❌ Search with score failed: {e}")
-            return []
-
     async def get_agent_json(self, index_name: str = "my_agent_versions") -> Dict:
         """從指定的索引中檢索最新的 JSON 文件。"""
         if not self.client.ping():
@@ -365,14 +375,11 @@ class ElasticsearchService:
 
         self.logger.info(f"正在從索引 '{index_name}' 檢索 Agent JSON...")
         try:
-            # 搜尋索引中的所有文件，只取最新的一個
             response = self.client.search(
                 index=index_name,
                 body={
                     "query": {"match_all": {}},
                     "size": 1,
-                    # 如果您的 Agent JSON 文件有時間戳欄位，可以取消註解此行以確保獲取最新的
-                    # "sort": [{"timestamp": {"order": "desc"}}]
                 }
             )
             hits = response.get("hits", {}).get("hits", [])
@@ -381,7 +388,6 @@ class ElasticsearchService:
                 raise FileNotFoundError(f"在索引 '{index_name}' 中找不到任何 Agent 定義。")
 
             self.logger.info(f"成功從索引 '{index_name}' 檢索到文件。")
-            # 返回文件的 _source 部分，即原始的 JSON 內容
             return hits[0]["_source"]
 
         except Exception as e:
@@ -399,36 +405,3 @@ class ElasticsearchService:
         except Exception as e:
             self.logger.error(f"將 Agent JSON 轉換為位元組時發生錯誤: {e}")
             raise
-
-# Example usage
-if __name__ == "__main__":
-    # Initialize uploader
-    uploader = ElasticsearchService()
-
-    # Example file paths
-    file_paths = [
-        "path/to/your/file1.txt",
-        "path/to/your/file2.xlsx",
-        "path/to/your/file3.yaml"
-    ]
-
-    # Upload files
-    success = uploader.upload_multiple_files(
-        file_paths=file_paths,
-        index_name="my_documents",
-        delete_existing=False,  # Set to True to clear index first
-        check_duplicates=True  # Set to False to skip duplicate checking
-    )
-
-    if success:
-        print("✅ All files uploaded successfully!")
-
-        # Example search
-        results = uploader.search_with_score("your search query", "my_documents", k=3)
-        for doc, score in results:
-            print(f"Score: {score}")
-            print(f"Content: {doc.page_content[:200]}...")
-            print(f"Metadata: {doc.metadata}")
-            print("-" * 50)
-    else:
-        print("❌ Some files failed to upload")
