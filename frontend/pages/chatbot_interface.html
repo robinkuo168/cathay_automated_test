@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 聊天機器人</title>
+    <!-- 引用統一的 CSS 檔案 -->
+    <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<!-- 為 body 新增一個 class，方便在 style.css 中進行特定頁面的樣式覆蓋 -->
+<body class="chatbot-page">
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>AI 助理</h1>
+            <p>今天有什麼可以幫助您的嗎？</p>
+        </div>
+
+        <div class="chat-messages" id="chatMessages">
+            <div class="message bot">
+                <div class="message-content">
+                    您好！我是您 SRE 的 AI 助理，可以隨時向我提問！。
+                </div>
+            </div>
+        </div>
+
+        <div class="typing-indicator" id="typingIndicator">
+            <span>AI 正在輸入中</span>
+            <div class="typing-dots">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+            </div>
+        </div>
+
+        <div class="chat-input-container">
+            <form class="chat-input-form" id="chatForm">
+                <input
+                    type="text"
+                    class="chat-input"
+                    id="chatInput"
+                    placeholder="請在此輸入您的訊息..."
+                    autocomplete="off"
+                    required
+                >
+                <button type="submit" class="send-button" id="sendButton">傳送</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 引用外部函式庫和我們自己的 JS 檔案 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.1/marked.min.js"></script>
+    <script src="../assets/js/chatbot_interface.js"></script>
+</body>
+</html>

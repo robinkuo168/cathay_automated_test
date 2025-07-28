@@ -77,7 +77,7 @@ class AssertionInfo:
     patterns: List[str] = field(default_factory=list)
     is_or: bool = False
     is_not: bool = False
-    main_sample_only: bool = True
+    scope: str = "all"
     enabled: bool = True
     assume_success: bool = True
 
@@ -297,17 +297,9 @@ class JMXGeneratorService:
                     self.logger.warning(f"模板中定義的 CSV 檔案 '{csv_filename}' 未上傳或處理失敗，已跳過。")
                     continue
 
-                final_variable_names = []
-                # 1. 優先嘗試從模板中獲取 variable_names
-                template_vars_str = csv_params.get('variable_names', '').strip()
-                if template_vars_str:
-                    # 如果使用者在模板中明確指定了，則使用它們
-                    final_variable_names = [name.strip() for name in template_vars_str.split(',') if name.strip()]
-                    self.logger.info(f"偵測到模板指令：為 '{csv_filename}' 使用指定的變數: {final_variable_names}")
-                else:
-                    # 2. 如果模板中沒有，則回退使用從 CSV 檔案讀取的標頭
-                    final_variable_names = csv_info_dict.get('variable_names', [])
-                    self.logger.info(f"模板中未指定變數，為 '{csv_filename}' 回退使用檔案標頭: {final_variable_names}")
+                # 強制使用從 CSV 檔案實際讀取的標頭作為變數名稱，忽略 LLM 模板的建議。
+                final_variable_names = csv_info_dict.get('variable_names', [])
+                self.logger.info(f"強制使用檔案標頭作為 '{csv_filename}' 的變數: {final_variable_names}")
 
                 sharing_mode_from_template = csv_params.get('sharing_mode', 'All threads').lower()
                 sharing_mode_jmeter = 'shareMode.all'
@@ -320,7 +312,7 @@ class JMXGeneratorService:
                     name=csv_data.get('name', 'CSV Data Set Config'),
                     filename=csv_filename,
                     variable_names=final_variable_names,
-                    ignoreFirstLine=csv_params.get('ignore_first_line', 'false').lower() == 'true',
+                    ignoreFirstLine=csv_params.get('ignore_first_line', 'true').lower() == 'true',
                     recycle=csv_params.get('recycle_on_eof', 'true').lower() == 'true',
                     stopThread=csv_params.get('stop_thread_on_eof', 'false').lower() == 'true',
                     quotedData=csv_params.get('quoted_data', 'false').lower() == 'true',
@@ -330,7 +322,7 @@ class JMXGeneratorService:
                 )
                 tg_context.csv_data_sets.append(csv_info)
 
-            # 處理 HTTP Requests (此部分邏輯不變)
+            # 處理 HTTP Requests
             for req_data in tg_data.get('http_requests', []):
                 req_params = req_data.get('params', {})
                 http_req_info = HttpRequestInfo(
@@ -350,6 +342,8 @@ class JMXGeneratorService:
                     json_content_info = processed_files.get('json_contents', {}).get(body_filename)
                     if json_content_info:
                         http_req_info.source_json_filename = body_filename
+                        # 將 JSON 檔案的原始文字內容直接存入 HttpRequestInfo 物件
+                        http_req_info.json_body = json_content_info.get('raw_content', '')
                         if tg_context.csv_data_sets:
                             http_req_info.is_parameterized = True
 
@@ -1174,7 +1168,7 @@ class JMXGeneratorService:
         element = E.CSVDataSet(
             E.stringProp(csv_info.delimiter, name="delimiter"),
             E.stringProp(csv_info.encoding, name="fileEncoding"),
-            E.stringProp(csv_info.filename, name="filename"),
+            E.stringProp(f"./{csv_info.filename}", name="filename"),
             E.boolProp(str(csv_info.ignoreFirstLine).lower(), name="ignoreFirstLine"),
             E.boolProp(str(csv_info.quotedData).lower(), name="quotedData"),
             E.boolProp(str(csv_info.recycle).lower(), name="recycle"),
@@ -1247,36 +1241,29 @@ class JMXGeneratorService:
         :param assertion: 包含斷言所有設定的 AssertionInfo 物件。
         :return: 一個包含 ResponseAssertion XML 元素和其 hashTree 的元組。
         """
-        # 1. 處理 is_not 條件，它會修改 test_type
-        # JMeter 使用位元運算來組合條件，4 代表 'Not'
+        # 1. 處理 is_not 條件
         final_test_type = assertion.test_type
         if assertion.is_not:
-            final_test_type |= 4  # 按位或運算，添加 NOT 條件 (e.g., Substring 2 -> Not Substring 6)
+            final_test_type |= 4
 
         # 2. 準備 test_strings 集合
-        #    此處直接使用 assertion.patterns 列表，確保不會混入任何多餘的字串。
-        test_strings_props = [E.stringProp(str(p)) for p in assertion.patterns]
+        test_strings_props = [
+            E.stringProp(str(p), name=str(hash(str(p))))
+            for p in assertion.patterns if p
+        ]
         collection_prop = E.collectionProp(*test_strings_props, name="Assertion.test_strings")
 
-        # 3. 處理 main_sample_only (對應 Assertion.scope)
-        scope = "main" if assertion.main_sample_only else "all"
-
-        # 4. 建立所有屬性（除了 is_or）
+        # 3. 建立所有屬性
         props = [
             collection_prop,
             E.stringProp("", name="Assertion.custom_message"),
             E.stringProp(assertion.test_field, name="Assertion.test_field"),
             E.boolProp(str(assertion.assume_success).lower(), name="Assertion.assume_success"),
             E.intProp(str(final_test_type), name="Assertion.test_type"),
-            E.stringProp(scope, name="Assertion.scope")
+            E.stringProp(assertion.scope, name="Assertion.scope")
         ]
 
-        # 5. 【關鍵】根據 is_or 條件，添加額外的 boolProp
-        #    這個屬性只在需要 OR 邏輯時才存在。
-        if assertion.is_or:
-            props.append(E.boolProp("true", name="Assertion.or"))
-
-        # 6. 組合最終的 XML 元件
+        # 4. 組合最終的 XML 元件
         element = E.ResponseAssertion(
             *props,
             guiclass="AssertionGui",
@@ -1401,27 +1388,26 @@ class JMXGeneratorService:
                 for req_info in tg_context.http_requests:
                     self.logger.info(f"  -> 正在組裝 HTTP Sampler: {req_info.name}")
 
-                    final_body_content = ""  # 初始化最終的 Body 內容
+                    # ▼▼▼【核心修正】▼▼▼
+                    # 步驟 1: 直接從 HttpRequestInfo 物件獲取 Body 內容
+                    # (此內容已在 _prepare_generation_context 階段從檔案讀取)
+                    final_body_content = req_info.json_body or ""
 
-                    if req_info.source_json_filename:
-                        # 如果是檔案引用，生成 __FileToString 函數字串
-                        # 使用 JMeter 屬性 ${__P(testDataPath,.)} 來指定檔案的根目錄，增加靈活性
-                        final_body_content = f"${{__FileToString(${{__P(testDataPath,.)}}/{req_info.source_json_filename},UTF-8)}}"
-                        self.logger.info(f"    -> Body 來源: 檔案引用 -> {final_body_content}")
-                    elif req_info.json_body:
-                        # 否則，使用舊的邏輯，處理嵌入的 Body
-                        final_body_content = req_info.json_body
-                        self.logger.info(f"    -> Body 來源: 嵌入式內容")
-                        # 參數化邏輯只對嵌入式 Body 生效
-                        if req_info.is_parameterized and tg_context.csv_data_sets:
-                            for csv_info in tg_context.csv_data_sets:
-                                final_body_content = self._parameterize_json_body(final_body_content, csv_info)
+                    # 步驟 2: 如果請求被標記為需要參數化，則呼叫參數化函式
+                    if req_info.is_parameterized and tg_context.csv_data_sets:
+                        self.logger.info(f"    -> 請求 '{req_info.name}' 需要參數化，開始處理...")
+                        # 通常一個請求只會對應一個 CSV，但為求彈性，這裡遍歷所有
+                        for csv_info in tg_context.csv_data_sets:
+                            final_body_content = self._parameterize_json_body(final_body_content, csv_info)
+                    else:
+                        self.logger.info(f"    -> Body 來源: 靜態內容")
 
-                    # 將處理好的 final_body_content 傳給建立函式
+                    # 步驟 3: 將最終處理好的 Body 傳遞給建立函式
                     sampler_element, sampler_hash_tree = self._create_http_sampler_proxy(
                         req_info=req_info,
                         json_body=final_body_content
                     )
+                    # ▲▲▲【核心修正】▲▲▲
 
                     tg_hash_tree.append(sampler_element)
                     tg_hash_tree.append(sampler_hash_tree)

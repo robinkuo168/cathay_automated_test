@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, validator, Field
@@ -19,9 +19,12 @@ import datetime
 from pathlib import Path
 import asyncio
 from contextlib import asynccontextmanager
+import shutil
 from backend.services import JMXGeneratorService, FileProcessorService, LogService
 from backend.services import ReportAnalysisService, LLMService
 from backend.services import DocumentProcessorService, SynDataGenService
+from backend.services.elasticsearch_service import ElasticsearchService
+from backend.services.langflow_service import LangflowService
 
 def setup_logging():
     """
@@ -62,6 +65,10 @@ _doc_processor_service_lock = threading.Lock()
 _doc_processor_service = None
 _spec_analysis_service_lock = threading.Lock()
 _spec_analysis_service = None
+_elasticsearch_service = None
+_elasticsearch_service_lock = threading.Lock()
+_langflow_service = None
+_langflow_service_lock = threading.Lock()
 
 def get_llm_service(model_name: str = "default", config: Optional[Dict] = None) -> LLMService:
     """
@@ -71,7 +78,7 @@ def get_llm_service(model_name: str = "default", config: Optional[Dict] = None) 
     :return: LLMService 實例
     """
     global _llm_services
-    
+
     if model_name not in _llm_services:
         with _llm_services_lock:
             if model_name not in _llm_services:
@@ -81,7 +88,7 @@ def get_llm_service(model_name: str = "default", config: Optional[Dict] = None) 
                 except Exception as e:
                     logger.error(f"LLM 服務初始化失敗 (Model: {model_name}): {e}")
                     raise
-    
+
     return _llm_services[model_name]
 
 @lru_cache(maxsize=1)
@@ -92,7 +99,7 @@ def get_jmx_service(model_name: str = "default") -> JMXGeneratorService:
     :return: JMXGeneratorService 實例
     """
     global _jmx_service
-    
+
     # 如果沒有指定特定的模型名稱，使用默認的單例模式
     if model_name == "default":
         if _jmx_service is None:
@@ -148,11 +155,44 @@ def get_spec_analysis_service():
                     raise
     return _spec_analysis_service
 
+@lru_cache(maxsize=1)
+def get_elasticsearch_service() -> ElasticsearchService:
+    """執行緒安全的 ElasticsearchService 初始化"""
+    global _elasticsearch_service
+    if _elasticsearch_service is None:
+        with _elasticsearch_service_lock:
+            if _elasticsearch_service is None:
+                try:
+                    _elasticsearch_service = ElasticsearchService()
+                    logger.info("Elasticsearch 服務初始化成功")
+                except Exception as e:
+                    logger.error(f"Elasticsearch 服務初始化失敗: {e}")
+                    raise
+    return _elasticsearch_service
+
+@lru_cache(maxsize=1)
+def get_langflow_service() -> LangflowService:
+    """執行緒安全的 LangflowService 初始化"""
+    global _langflow_service
+    if _langflow_service is None:
+        with _langflow_service_lock:
+            if _langflow_service is None:
+                try:
+                    _langflow_service = LangflowService()
+                    logger.info("Langflow 服務初始化成功")
+                except Exception as e:
+                    logger.error(f"Langflow 服務初始化失敗: {e}")
+                    raise
+    return _langflow_service
+
 # 創建必要的目錄
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+# 用於儲存聊天歷史的記憶體字典
+sessions: Dict[str, List[Dict]] = {}
 
 # 服務初始化
 try:
@@ -182,31 +222,60 @@ def get_report_analysis_service():
             )
     return report_analysis_service
 
-# FastAPI 應用程式
-app = FastAPI(
-    title="JMeter JMX Generator API",
-    version="1.0.0",
-    description="JMeter JMX 檔案生成 API",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
-
-@app.on_event("startup")
-async def startup_event():
-    """應用程式啟動事件"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    應用程式生命週期管理。
+    """
+    # --- 啟動時執行的程式碼 ---
     setup_logging()
+    logger.info("應用程式啟動中... (日誌系統已設定)")
 
-    logger.info("JMeter JMX Generator API 啟動中... (日誌系統已設定)")
-    if log_service:
-        log_service.add_log("INFO", "API 服務啟動")
+    try:
+        # 確保上傳和輸出目錄存在
+        UPLOAD_DIR.mkdir(exist_ok=True)
+        OUTPUT_DIR.mkdir(exist_ok=True)
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """應用程式關閉事件"""
-    logger.info("JMeter JMX Generator API 關閉中...")
+        # 預先加載默認 LLM 模型
+        default_config = {
+            "model_id": os.getenv("MODEL_ID", "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"),
+            "max_tokens": 4000,
+            "temperature": 0.1
+        }
+        get_llm_service("default", default_config).initialize()
+        logger.info(f"已預先加載默認 LLM 模型")
+
+        # 初始化並測試 Elasticsearch 服務
+        get_elasticsearch_service().test_connection()
+        logger.info("Elasticsearch 連線測試成功。")
+
+        # 初始化 Langflow 服務並設定流程
+        logger.info("正在初始化 Langflow 流程...")
+        langflow_svc = get_langflow_service()
+        await langflow_svc.initialize_flow()
+        logger.info("Langflow 流程初始化完成。")
+
+    except Exception as e:
+        # 如果在啟動過程中發生任何錯誤，記錄下來並阻止應用程式啟動
+        logger.critical(f"應用程式啟動失敗，發生嚴重錯誤: {e}", exc_info=True)
+        raise RuntimeError(f"應用程式啟動失敗: {e}") from e
+
+    logger.info("✅ 應用程式已成功啟動並準備就緒。")
+    yield
+    # --- 關閉時執行的程式碼 ---
+    logger.info("應用程式關閉中...")
     if log_service:
         log_service.add_log("INFO", "API 服務關閉")
 
+# FastAPI 應用程式
+app = FastAPI(
+    title="Auto Testing API",
+    version="1.0.0",
+    description="自動化測試 API",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan  # 使用新的 lifespan 管理器
+)
 
 # CORS 設定
 app.add_middleware(
@@ -398,6 +467,18 @@ class SpecAnalysisData(BaseModel):
 class SpecAnalysisResponse(APIResponse):
     data: Optional[SpecAnalysisData] = None
 
+class ChatMessage(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+
+class ChatResponseData(BaseModel):
+    response: str
+    session_id: str
+    timestamp: str
+
+class ChatResponse(APIResponse):
+    data: Optional[ChatResponseData] = None
+
 # 工具函數
 def log_with_request_id(level: str, message: str):
     """帶請求 ID 的日誌記錄"""
@@ -534,22 +615,22 @@ async def startup_event():
         # 確保上傳和輸出目錄存在
         UPLOAD_DIR.mkdir(exist_ok=True)
         OUTPUT_DIR.mkdir(exist_ok=True)
-        
+
         # 預先加載默認模型
         default_config = {
             "model_id": os.getenv("MODEL_ID", "meta-llama/llama-3-3-70b-instruct"),
             "max_tokens": 4000,
             "temperature": 0.1
         }
-        
+
         # 初始化默認模型
         default_service = get_llm_service("default", default_config)
         default_service.initialize()
-        
+
         # 可以在此添加其他預設模型的初始化
         # fast_service = get_llm_service("fast", {"max_tokens": 2000, "temperature": 0.7})
         # fast_service.initialize()
-        
+
         logger.info(f"應用程式啟動完成，已加載模型: {list(_llm_services.keys())}")
     except Exception as e:
         logger.error(f"啟動時發生錯誤: {e}")
@@ -1286,3 +1367,110 @@ async def get_task_status(task_id: str):
         # 即使任務還沒在字典中創建，也返回 processing，給背景任務一點時間
         return {"status": "processing", "message": "Task initializing..."}
     return task
+
+@app.post("/api/es/upload")
+async def es_upload_files(
+    files: List[UploadFile] = File(...),
+    index_name: str = Form(default="cathay_project1_chunks"),
+    deleteExisting: str = Form(default="false")
+):
+    """上傳多個檔案至 Elasticsearch"""
+    uploader = get_elasticsearch_service()
+    delete_existing = deleteExisting.lower() in ('true', '1', 'yes')
+    temp_files = []
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for file in files:
+                temp_path = os.path.join(temp_dir, file.filename)
+                with open(temp_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+                temp_files.append(temp_path)
+
+            success = uploader.upload_multiple_files(
+                file_paths=temp_files,
+                index_name=index_name,
+                delete_existing=delete_existing
+            )
+            stats = uploader.client.count(index=index_name)
+            return create_response(
+                success=success,
+                message=f"處理了 {len(temp_files)} 個檔案",
+                data={"total_docs_in_index": stats.get('count', 'N/A')}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/es/search")
+async def es_search_documents(
+    query: str = Form(...),
+    index_name: str = Form(default="cathay_project1_chunks"),
+    k: int = Form(default=5)
+):
+    """在 Elasticsearch 中進行向量搜尋"""
+    uploader = get_elasticsearch_service()
+    try:
+        results = uploader.search_with_score(query, index_name, k)
+        search_results = [{
+            "content": doc.page_content,
+            "metadata": doc.metadata,
+            "score": float(score)
+        } for doc, score in results]
+        return create_response(success=True, message="搜尋成功", data={"results": search_results})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(chat_message: ChatMessage):
+    """
+    處理聊天訊息，將其發送到 Langflow 並返回回應。
+    """
+    try:
+        # 獲取或創建 session
+        session_id = chat_message.session_id or str(uuid.uuid4())
+        if session_id not in sessions:
+            sessions[session_id] = []
+
+        log_with_request_id("INFO", f"收到來自 session {session_id} 的訊息: {chat_message.message}")
+
+        # 獲取 Langflow 服務並發送訊息
+        langflow_svc = get_langflow_service()
+        response_text = await langflow_svc.send_chat_message(chat_message.message, session_id)
+
+        # 將對話加入歷史紀錄
+        history_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "user_message": chat_message.message,
+            "bot_response": response_text
+        }
+        sessions[session_id].append(history_entry)
+
+        # 保持每個 session 最多 50 條歷史紀錄
+        if len(sessions[session_id]) > 50:
+            sessions[session_id] = sessions[session_id][-50:]
+
+        # 準備回傳資料
+        response_data = ChatResponseData(
+            response=response_text,
+            session_id=session_id,
+            timestamp=datetime.datetime.now().isoformat()
+        )
+
+        return create_response(
+            success=True,
+            message="訊息處理成功",
+            data=response_data
+        )
+
+    except HTTPException:
+        # 重新拋出已知的 HTTP 異常，讓全域處理器捕捉
+        raise
+    except Exception as e:
+        # 捕捉其他未預期的錯誤
+        error_msg = f"處理聊天訊息時發生錯誤: {str(e)}"
+        log_with_request_id("ERROR", error_msg)
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="處理聊天訊息時發生內部錯誤"
+        )

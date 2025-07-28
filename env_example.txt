@@ -18,3 +18,13 @@ APP_VERSION=1.0.0
 MAX_SYNC_ROWS = 300
 DES3_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
 DES3_IV=xxxxxxxx
+# --- Elasticsearch 服務設定 ---
+ES_HOST="cf7xxxxxxx.databases.appdomain.cloud"
+ES_PORT=31041
+ES_USERNAME="ibm_cloud_user"
+ES_PASSWORD="XxxxxxxxxxxxxxxxxxH"
+# 【重要】請將憑證檔案的路徑改為相對於專案根目錄的相對路徑，或確保 Docker 容器內可以存取
+ES_CERT_PATH="certs/es_cert.pem" # 假設您將憑證放在專案的 certs/ 目錄下
+# --- Langflow 服務設定 ---
+LANGFLOW_BASE_URL="https://langflow-chatbot.xxxxxxxxxxx.jp-tok.codeengine.appdomain.cloud"
+LANGFLOW_PROJECT_NAME="Starter Project"
