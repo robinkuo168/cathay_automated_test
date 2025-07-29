@@ -48,6 +48,9 @@ RUN touch /etc/nginx/conf.d/default.conf && \
     chown -R appuser:appuser /app /etc/nginx/conf.d/default.conf /var/www/html && \
     chmod -R 755 /var/www/html
 
+# 這會讓 main.py 跳過載入本地開發用的前端路由
+ENV APP_ENV=production
+
 # 切換到非 root 使用者
 USER appuser
 

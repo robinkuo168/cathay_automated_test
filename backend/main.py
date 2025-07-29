@@ -279,15 +279,36 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 獲取專案根目錄 (即 backend 的上一層)
-PROJECT_ROOT = Path(__file__).parent.parent
+if os.getenv("APP_ENV") != "production":
+    logger.info("非生產環境，正在載入本地開發前端服務...")
 
-# 掛載靜態檔案目錄 (CSS, JS, 圖片)
-app.mount("/assets", StaticFiles(directory=PROJECT_ROOT / "frontend" / "assets"), name="assets")
+    # 獲取專案根目錄 (即 backend 的上一層)
+    PROJECT_ROOT = Path(__file__).parent.parent
 
-# 設定 Jinja2 模板引擎，用於讀取 HTML 檔案
-# 指向 frontend/pages 資料夾
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "frontend" / "pages"))
+    # 掛載靜態檔案目錄 (CSS, JS, 圖片)
+    app.mount("/assets", StaticFiles(directory=PROJECT_ROOT / "frontend" / "assets"), name="assets")
+
+    # 設定 Jinja2 模板引擎，用於讀取 HTML 檔案
+    templates = Jinja2Templates(directory=str(PROJECT_ROOT / "frontend" / "pages"))
+
+
+    # --- 前端頁面路由 (僅用於本地開發) ---
+    @app.get("/", response_class=HTMLResponse)
+    async def serve_root_as_index(request: Request):
+        """當訪問根目錄時，直接提供 index.html"""
+        return templates.TemplateResponse("index.html", {"request": request})
+
+
+    @app.get("/pages/{page_name}.html", response_class=HTMLResponse)
+    async def serve_html_pages(request: Request, page_name: str):
+        """動態提供 frontend/pages 資料夾中的 HTML 頁面"""
+        template_path = PROJECT_ROOT / "frontend" / "pages" / f"{page_name}.html"
+        if not template_path.is_file():
+            raise HTTPException(status_code=404, detail=f"頁面 '{page_name}.html' 不存在")
+        return templates.TemplateResponse(f"{page_name}.html", {"request": request})
+
+
+    logger.info("本地開發前端服務載入完成。")
 
 # CORS 設定
 app.add_middleware(
@@ -312,9 +333,9 @@ async def add_request_id_middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Process-Time"] = str(process_time)
 
-    logger.info(f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}s")
     if not request.url.path.startswith('/assets'):
-        logger.info(f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}")
+        logger.info(
+            f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}s")
     return response
 
 # 響應模型
@@ -547,21 +568,6 @@ async def global_exception_handler(request: Request, exc: Exception):
             error="系統發生未預期的錯誤，請稍後再試"
         )
     )
-
-# --- 前端頁面路由 (僅用於本地開發) ---
-@app.get("/", response_class=HTMLResponse)
-async def serve_root_as_index(request: Request):
-    """當訪問根目錄時，直接提供 index.html"""
-    # 注意：在 Nginx 環境下，這個路由不會被觸發，Nginx 會直接處理
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.get("/pages/{page_name}.html", response_class=HTMLResponse)
-async def serve_html_pages(request: Request, page_name: str):
-    """動態提供 frontend/pages 資料夾中的 HTML 頁面"""
-    template_path = PROJECT_ROOT / "frontend" / "pages" / f"{page_name}.html"
-    if not template_path.is_file():
-        raise HTTPException(status_code=404, detail=f"頁面 '{page_name}.html' 不存在")
-    return templates.TemplateResponse(f"{page_name}.html", {"request": request})
 
 # API 端點
 @app.get("/api", response_model=APIResponse)

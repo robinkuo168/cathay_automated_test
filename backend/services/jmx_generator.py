@@ -270,14 +270,19 @@ class JMXGeneratorService:
         thread_group_contexts = []
         for tg_data in req_analysis.get('thread_groups', []):
             tg_params = tg_data.get('params', {})
+            duration_from_params = tg_params.get('duration', '')
+            use_scheduler_from_params = tg_params.get('use_scheduler', 'false').lower() == 'true'
+            # 只要 duration 有值，或者 LLM 明確指定，就應該啟用 scheduler
+            should_use_scheduler = use_scheduler_from_params or bool(duration_from_params)
+
             tg_context = ThreadGroupContext(
                 name=tg_data.get('name'),
                 num_threads_str=tg_params.get('threads', '${__P(threads,1)}'),
                 ramp_time_str=tg_params.get('rampup', '${__P(rampUp,1)}'),
                 loops_str=tg_params.get('loops', '${__P(loop,-1)}'),
-                duration_str=tg_params.get('duration', '${__P(duration,60)}'),
+                duration_str=duration_from_params,
                 on_sample_error=tg_params.get('on_sample_error', 'continue'),
-                scheduler=tg_params.get('use_scheduler', 'false').lower() == 'true',
+                scheduler=should_use_scheduler,
                 headers=[GlobalHeaderInfo(**h) for h in tg_data.get('headers', [])],
                 random_variables=[GlobalRandomVariableInfo(**rv) for rv in tg_data.get('random_variables', [])],
                 listeners=[ListenerInfo(**l) for l in tg_data.get('listeners', [])]
@@ -348,6 +353,15 @@ class JMXGeneratorService:
                             http_req_info.is_parameterized = True
 
                 tg_context.http_requests.append(http_req_info)
+
+            # 增加 CSV 設定遺失的警告機制
+            body_requires_parameters = any(
+                '${' in req.json_body for req in tg_context.http_requests if req.json_body
+            )
+            if body_requires_parameters and not tg_context.csv_data_sets:
+                self.logger.warning(
+                    f"ThreadGroup '{tg_context.name}': 偵測到請求 Body 中有變數，但 LLM 未能解析出 CSV 設定，JMX 可能不完整。"
+                )
 
             thread_group_contexts.append(tg_context)
 
@@ -1232,6 +1246,25 @@ class JMXGeneratorService:
         )
         return element, E.hashTree()
 
+    def _java_string_hashcode(self, text: str) -> int:
+        """
+        計算一個字串的雜湊碼，完全模擬 Java 的 String.hashCode() 行為。
+        這對於 JMeter 內部資料結構的正確性至關重要。
+        :param text: 輸入的字串。
+        :return: 一個 32 位元帶正負號的整數雜湊碼。
+        """
+        h = 0
+        # Java 的 hashCode 公式是 h = 31 * h + c
+        # 我們使用位元運算來將結果保持在 32 位元範圍內
+        for char in text:
+            h = (31 * h + ord(char)) & 0xFFFFFFFF
+
+        # 如果最高位 (第 32 位) 是 1，在二補數表示法中它是一個負數
+        if h & 0x80000000:
+            # 從 32 位元無符號整數轉換為 32 位元帶正負號整數
+            h = h - 0x100000000
+        return h
+
     def _create_response_assertion(self, assertion: AssertionInfo) -> tuple:
         """
         根據 `AssertionInfo` 物件建立 `<ResponseAssertion>` 元件。
@@ -1247,11 +1280,13 @@ class JMXGeneratorService:
             final_test_type |= 4
 
         # 2. 準備 test_strings 集合
+        # 使用自訂的 Java hashCode 函式，而不是 Python 內建的 hash()
         test_strings_props = [
-            E.stringProp(str(p), name=str(hash(str(p))))
+            E.stringProp(str(p), name=str(self._java_string_hashcode(str(p))))
             for p in assertion.patterns if p
         ]
-        collection_prop = E.collectionProp(*test_strings_props, name="Assertion.test_strings")
+        # 【確認】collectionProp 的 name 屬性拼寫正確
+        collection_prop = E.collectionProp(*test_strings_props, name="Asserion.test_strings")
 
         # 3. 建立所有屬性
         props = [
@@ -1388,15 +1423,12 @@ class JMXGeneratorService:
                 for req_info in tg_context.http_requests:
                     self.logger.info(f"  -> 正在組裝 HTTP Sampler: {req_info.name}")
 
-                    # ▼▼▼【核心修正】▼▼▼
                     # 步驟 1: 直接從 HttpRequestInfo 物件獲取 Body 內容
-                    # (此內容已在 _prepare_generation_context 階段從檔案讀取)
                     final_body_content = req_info.json_body or ""
 
                     # 步驟 2: 如果請求被標記為需要參數化，則呼叫參數化函式
                     if req_info.is_parameterized and tg_context.csv_data_sets:
                         self.logger.info(f"    -> 請求 '{req_info.name}' 需要參數化，開始處理...")
-                        # 通常一個請求只會對應一個 CSV，但為求彈性，這裡遍歷所有
                         for csv_info in tg_context.csv_data_sets:
                             final_body_content = self._parameterize_json_body(final_body_content, csv_info)
                     else:
@@ -1407,16 +1439,18 @@ class JMXGeneratorService:
                         req_info=req_info,
                         json_body=final_body_content
                     )
-                    # ▲▲▲【核心修正】▲▲▲
 
                     tg_hash_tree.append(sampler_element)
                     tg_hash_tree.append(sampler_hash_tree)
 
                     if req_info.assertions:
                         for assertion_info in req_info.assertions:
-                            assertion_element, assertion_ht = self._create_response_assertion(assertion_info)
-                            sampler_hash_tree.append(assertion_element)
-                            sampler_hash_tree.append(assertion_ht)
+                            if assertion_info.patterns:
+                                assertion_element, assertion_ht = self._create_response_assertion(assertion_info)
+                                sampler_hash_tree.append(assertion_element)
+                                sampler_hash_tree.append(assertion_ht)
+                            else:
+                                self.logger.warning(f"因內容為空，已跳過生成名為 '{assertion_info.name}' 的斷言。")
 
             if tg_context.listeners:
                 for listener_info in tg_context.listeners:
@@ -1602,3 +1636,22 @@ class JMXGeneratorService:
             cleaned_response = cleaned_response[:-3].strip()
 
         return cleaned_response
+
+    def _java_string_hashcode(self, text: str) -> int:
+        """
+        計算一個字串的雜湊碼，完全模擬 Java 的 String.hashCode() 行為。
+        這對於 JMeter 內部資料結構的正確性至關重要。
+        :param text: 輸入的字串。
+        :return: 一個 32 位元帶正負號的整數雜湊碼。
+        """
+        h = 0
+        # Java 的 hashCode 公式是 h = 31 * h + c
+        # 我們使用位元運算來將結果保持在 32 位元範圍內
+        for char in text:
+            h = (31 * h + ord(char)) & 0xFFFFFFFF
+
+        # 如果最高位 (第 32 位) 是 1，在二補數表示法中它是一個負數
+        if h & 0x80000000:
+            # 從 32 位元無符號整數轉換為 32 位元帶正負號整數
+            h = h - 0x100000000
+        return h
