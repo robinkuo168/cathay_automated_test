@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Request, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, validator, Field
 from typing import List, Optional, Any, Dict, Union
 import logging
@@ -260,7 +262,7 @@ async def lifespan(app: FastAPI):
         logger.critical(f"應用程式啟動失敗，發生嚴重錯誤: {e}", exc_info=True)
         raise RuntimeError(f"應用程式啟動失敗: {e}") from e
 
-    logger.info("✅ 應用程式已成功啟動並準備就緒。")
+    logger.info("應用程式已成功啟動並準備就緒。")
     yield
     # --- 關閉時執行的程式碼 ---
     logger.info("應用程式關閉中...")
@@ -272,10 +274,20 @@ app = FastAPI(
     title="Auto Testing API",
     version="1.0.0",
     description="自動化測試 API",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan  # 使用新的 lifespan 管理器
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    lifespan=lifespan
 )
+
+# 獲取專案根目錄 (即 backend 的上一層)
+PROJECT_ROOT = Path(__file__).parent.parent
+
+# 掛載靜態檔案目錄 (CSS, JS, 圖片)
+app.mount("/assets", StaticFiles(directory=PROJECT_ROOT / "frontend" / "assets"), name="assets")
+
+# 設定 Jinja2 模板引擎，用於讀取 HTML 檔案
+# 指向 frontend/pages 資料夾
+templates = Jinja2Templates(directory=str(PROJECT_ROOT / "frontend" / "pages"))
 
 # CORS 設定
 app.add_middleware(
@@ -301,6 +313,8 @@ async def add_request_id_middleware(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
 
     logger.info(f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}s")
+    if not request.url.path.startswith('/assets'):
+        logger.info(f"[{request_id}] {request.method} {request.url.path} - {response.status_code} - {process_time:.3f}")
     return response
 
 # 響應模型
@@ -534,6 +548,21 @@ async def global_exception_handler(request: Request, exc: Exception):
         )
     )
 
+# --- 前端頁面路由 (僅用於本地開發) ---
+@app.get("/", response_class=HTMLResponse)
+async def serve_root_as_index(request: Request):
+    """當訪問根目錄時，直接提供 index.html"""
+    # 注意：在 Nginx 環境下，這個路由不會被觸發，Nginx 會直接處理
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/pages/{page_name}.html", response_class=HTMLResponse)
+async def serve_html_pages(request: Request, page_name: str):
+    """動態提供 frontend/pages 資料夾中的 HTML 頁面"""
+    template_path = PROJECT_ROOT / "frontend" / "pages" / f"{page_name}.html"
+    if not template_path.is_file():
+        raise HTTPException(status_code=404, detail=f"頁面 '{page_name}.html' 不存在")
+    return templates.TemplateResponse(f"{page_name}.html", {"request": request})
+
 # API 端點
 @app.get("/api", response_model=APIResponse)
 async def root():
@@ -603,37 +632,6 @@ async def health_check():
         )
     except Exception as e:
         logger.error(f"健康檢查失敗: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"健康檢查失敗: {str(e)}"
-        )
-
-@app.on_event("startup")
-async def startup_event():
-    """應用程式啟動事件"""
-    try:
-        # 確保上傳和輸出目錄存在
-        UPLOAD_DIR.mkdir(exist_ok=True)
-        OUTPUT_DIR.mkdir(exist_ok=True)
-
-        # 預先加載默認模型
-        default_config = {
-            "model_id": os.getenv("MODEL_ID", "meta-llama/llama-3-3-70b-instruct"),
-            "max_tokens": 4000,
-            "temperature": 0.1
-        }
-
-        # 初始化默認模型
-        default_service = get_llm_service("default", default_config)
-        default_service.initialize()
-
-        # 可以在此添加其他預設模型的初始化
-        # fast_service = get_llm_service("fast", {"max_tokens": 2000, "temperature": 0.7})
-        # fast_service.initialize()
-
-        logger.info(f"應用程式啟動完成，已加載模型: {list(_llm_services.keys())}")
-    except Exception as e:
-        logger.error(f"啟動時發生錯誤: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"健康檢查失敗: {str(e)}"
@@ -1418,7 +1416,6 @@ async def es_search_documents(
         return create_response(success=True, message="搜尋成功", data={"results": search_results})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(chat_message: ChatMessage):

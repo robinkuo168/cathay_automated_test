@@ -23,6 +23,9 @@ RUN pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 # 複製後端程式碼
 COPY backend/ ./backend/
 
+# ---- 準備憑證 ----
+COPY certs/ ./certs/
+
 # ---- 準備前端 ----
 # 直接複製整個 frontend 目錄的內容到 Nginx 的網站根目錄
 COPY frontend/ /var/www/html/

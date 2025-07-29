@@ -1,40 +1,52 @@
-#streamlit==1.46.0
-pandas==2.1.4
-ibm-watsonx-ai>=1.3.0
-ibm-cloud-sdk-core>=3.24.2
+# --- Web Framework & Server ---
 fastapi==0.115.4
 uvicorn[standard]==0.32.0
+python-multipart==0.0.17
+
+# --- Core & Utilities ---
 pydantic==2.10.2
 pydantic-settings==2.6.1
-python-multipart==0.0.17
 python-dotenv==1.0.1
+httpx>=0.27,<0.29
+requests>=2.32
+structlog==25.4.0
+urllib3>=1.20,<3.0
+pycryptodome==3.21.0
+regex==2024.11.6
+
+# --- Data Handling & Scientific ---
 pandas==2.1.4
 numpy==1.26.4
-structlog==25.4.0
-httpx>=0.27,<0.29
-PyYAML==6.0.1
-langchain-core==0.2.22
-langchain-ibm==0.1.10
-langchain-elasticsearch==0.2.1
-langchain-text-splitters==0.2.2
-elasticsearch==8.15.0
-#streamlit-option-menu==0.4.0
-requests>=2.32
-# 圖表和視覺化
-#plotly==6.1.2
-#matplotlib==3.9.2
 openpyxl==3.1.5
 xlrd==2.0.1
+PyYAML==6.0.1
+
+# --- IBM Watsonx.ai & LangChain ---
+# 只指定主套件，讓 pip 自動處理核心依賴
+langchain==0.2.11
+langchain-ibm==0.1.10
+langchain-elasticsearch==0.2.1
+ibm-watsonx-ai>=1.3.0
+ibm-cloud-sdk-core>=3.24.2
+
+# --- Database & Search ---
+elasticsearch==8.15.0
+
+# --- File & Document Processing ---
 python-docx==1.1.2
-regex==2024.11.6
-Markdown==3.7
 docx2python==3.5.0
+Markdown==3.7
+
+# --- Testing & Development ---
 pytest==8.3.5
 pytest-asyncio==1.0.0
 pytest-cov==6.2.1
 pytest-mock==3.14.1
-python-dotenv==1.0.1
-#ibm-cos-sdk-core>=2.14.2
-urllib3>=1.20,<3.0
-#pycryptodome==3.21.0
 Faker==37.4.0
+
+# --- Optional / Unused ---
+# streamlit==1.46.0
+# streamlit-option-menu==0.4.0
+# plotly==6.1.2
+# matplotlib==3.9.2
+# ibm-cos-sdk-core>=2.14.2

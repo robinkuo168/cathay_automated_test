@@ -1,6 +1,6 @@
 let selectedFiles = [];
-const API_BASE = 'http://localhost:8000/api/es';
-//const API_BASE = '/api/es'; // Set API base for Elasticsearch endpoints
+//const API_BASE = 'http://localhost:8000/api/es';
+const API_BASE = '/api/es'; // Set API base for Elasticsearch endpoints
 
 // DOM Elements
 const elements = {

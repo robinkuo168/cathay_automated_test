@@ -6,8 +6,8 @@ class ChatBot {
         this.sendButton = document.getElementById('sendButton');
         this.typingIndicator = document.getElementById('typingIndicator');
 
-        this.apiUrl = 'http://localhost:8000/api/chat';
-//        this.apiUrl = '/api/chat'; // Use relative path for API
+//        this.apiUrl = 'http://localhost:8000/api/chat';
+        this.apiUrl = '/api/chat'; // Use relative path for API
         this.sessionId = this.generateSessionId();
 
         this.initializeMarkdown();
