@@ -7,69 +7,48 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import HTTPException
-import io      # <<< --- 【修正 1】新增匯入
-import requests # <<< --- 【修正 2】新增匯入
+import io
+import requests
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-
 class LangFlowAPIKeyManager:
-    """Manages LangFlow API keys."""
+    """
+    Manages LangFlow API keys with a robust, file-based persistence strategy.
+    """
 
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip('/')
+        # 將 API 金鑰儲存在一個簡單的文字檔中
         self.api_key_file = 'langflow_api_key.txt'
 
-    async def delete_all_api_keys(self) -> bool:
-        logger.info("🗑️  Starting to delete all existing API keys...")
-        api_keys = await self.list_api_keys_data()
-        if not api_keys:
-            logger.info("✅ No API keys found to delete")
-            return True
+    def load_api_key(self) -> Optional[str]:
+        """從本地檔案載入 API 金鑰。"""
+        if os.path.exists(self.api_key_file):
+            with open(self.api_key_file, 'r') as f:
+                key = f.read().strip()
+                if key:
+                    logger.info(f"🔑 從 '{self.api_key_file}' 載入已儲存的 API 金鑰。")
+                    return key
+        return None
 
-        deleted_count = 0
-        for key in api_keys:
-            key_id = key.get('id')
-            if key_id and await self.delete_api_key(key_id):
-                deleted_count += 1
-
-        logger.info(f"🎯 Successfully deleted {deleted_count} out of {len(api_keys)} API keys")
-        return deleted_count == len(api_keys)
-
-    async def delete_api_key(self, key_id: str) -> bool:
-        endpoints_to_try = [f"/api/v1/api-key/{key_id}", f"/api/v1/api_key/{key_id}"]
-        for endpoint in endpoints_to_try:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.delete(f"{self.base_url}{endpoint}")
-                    if response.status_code in [200, 204, 404]:
-                        return True
-            except Exception as e:
-                logger.warning(f"Error trying endpoint {endpoint}: {e}")
-        return False
-
-    async def list_api_keys_data(self) -> List[Dict]:
-        endpoints_to_try = ["/api/v1/api-key/", "/api/v1/api_key/"]
-        for endpoint in endpoints_to_try:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.get(f"{self.base_url}{endpoint}")
-                    if response.status_code == 200 and response.text.strip():
-                        data = response.json()
-                        return data.get('api_keys', data if isinstance(data, list) else [])
-            except Exception as e:
-                logger.warning(f"Error listing from {endpoint}: {e}")
-        return []
+    def save_api_key(self, api_key: str):
+        """將新的 API 金鑰儲存到本地檔案。"""
+        with open(self.api_key_file, 'w') as f:
+            f.write(api_key)
+        logger.info(f"新的 API 金鑰已成功儲存至 '{self.api_key_file}'。")
 
     async def generate_api_key(self, key_name: Optional[str] = None) -> Optional[str]:
+        """產生一個新的 API 金鑰。"""
         if not key_name:
             key_name = f"main-api-key-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         api_key_data = {"name": key_name}
-        endpoints_to_try = ["/api/v1/api-key/", "/api/v1/api_key/"]
+        # Langflow 的 API 端點有時不一致，嘗試兩個常見的變體
+        endpoints_to_try = ["/api/v1/api_key/", "/api/v1/api-key/"]
 
-        logger.info(f"🔑 Generating new API key: {key_name}")
+        logger.info(f"正在產生新的 API 金鑰: {key_name}")
         for endpoint in endpoints_to_try:
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
@@ -77,36 +56,57 @@ class LangFlowAPIKeyManager:
                     if response.status_code in [200, 201]:
                         api_key = response.json().get('api_key')
                         if api_key:
-                            logger.info("✅ API Key generated successfully!")
+                            logger.info("✅ API 金鑰產生成功！")
                             return api_key
             except Exception as e:
-                logger.warning(f"Error with endpoint {endpoint}: {e}")
+                logger.warning(f"嘗試端點 {endpoint} 失敗: {e}")
 
-        logger.error("❌ Failed to generate API key on all endpoints")
+        logger.error("在所有端點上都無法產生 API 金鑰。")
         return None
 
     async def test_api_key(self, api_key: str) -> bool:
+        """測試一個 API 金鑰是否有效。"""
+        if not api_key:
+            return False
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(f"{self.base_url}/api/v1/flows", headers={"x-api-key": api_key})
                 if response.status_code == 200:
-                    logger.info("✅ API key is working!")
+                    logger.info("API 金鑰測試通過！")
                     return True
+                logger.warning(f"API 金鑰測試失敗，狀態碼: {response.status_code}")
                 return False
         except Exception as e:
-            logger.error(f"❌ Error testing API key: {e}")
+            logger.error(f"測試 API 金鑰時發生錯誤: {e}")
             return False
 
-    async def setup_single_api_key(self) -> Optional[str]:
-        logger.info("🚀 Setting up single API key...")
-        await self.delete_all_api_keys()
-        new_api_key = await self.generate_api_key("main-chatbot-key")
-        if new_api_key and await self.test_api_key(new_api_key):
-            logger.info("🎉 Single API key setup completed successfully!")
-            return new_api_key
-        logger.error("❌ API key setup failed.")
-        return None
+    async def setup_api_key(self) -> Optional[str]:
+        """
+        設定 API 金鑰的核心邏輯。
+        它會先嘗試載入並測試現有的金鑰，如果失敗，才會產生新的金鑰。
+        """
+        logger.info("🚀 正在設定 API 金鑰...")
 
+        # 步驟 1: 嘗試載入已儲存的金鑰
+        existing_key = self.load_api_key()
+
+        # 步驟 2: 如果有已儲存的金鑰，測試其有效性
+        if existing_key and await self.test_api_key(existing_key):
+            logger.info("🎉 使用現有的有效 API 金鑰。")
+            return existing_key
+
+        # 步驟 3: 如果沒有金鑰或金鑰已失效，則產生一個新的
+        logger.info("找不到有效的現有金鑰，正在產生新的金鑰...")
+        new_api_key = await self.generate_api_key("main-chatbot-key")
+
+        # 步驟 4: 測試新產生的金鑰並儲存
+        if new_api_key and await self.test_api_key(new_api_key):
+            self.save_api_key(new_api_key)
+            logger.info("🎉 新的 API 金鑰設定完成！")
+            return new_api_key
+
+        logger.error("❌ API 金鑰設定失敗。無法產生或驗證新的金鑰。")
+        return None
 
 class LangflowService:
     def __init__(self):
@@ -123,10 +123,10 @@ class LangflowService:
         self.api_key_manager = LangFlowAPIKeyManager(self.base_url)
 
     async def setup_api_key(self) -> bool:
-        """Setup a single API key for all operations"""
-        new_api_key = await self.api_key_manager.setup_single_api_key()
-        if new_api_key:
-            self.api_key = new_api_key
+        """使用新的管理器設定 API 金鑰。"""
+        api_key = await self.api_key_manager.setup_api_key()
+        if api_key:
+            self.api_key = api_key
             return True
         return False
 
@@ -183,12 +183,12 @@ class LangflowService:
         logger.info("🔧 正在初始化或刷新 Langflow 流程...")
 
         # 步驟 1: 確保 API 金鑰已設定且有效
-        if not self.api_key or not await self.api_key_manager.test_api_key(self.api_key):
-            logger.info("API 金鑰未設定或無效，正在設定新的金鑰...")
+        if not self.api_key:
+            logger.info("API 金鑰未設定，正在執行設定程序...")
             if not await self.setup_api_key():
                 raise Exception("致命錯誤：無法設定 Langflow API 金鑰。")
         else:
-            logger.info("✅ 現有的 API 金鑰有效。")
+            logger.info("✅ 服務已有 API 金鑰。")
 
         # 步驟 2: 獲取專案 ID
         if not self.project_id:

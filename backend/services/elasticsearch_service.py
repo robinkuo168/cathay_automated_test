@@ -30,18 +30,12 @@ class ElasticsearchService:
         ES_USERNAME = os.getenv("ES_USERNAME")
         ES_PASSWORD = os.getenv("ES_PASSWORD")
 
-        # ▼▼▼【核心修正 1：動態計算絕對路徑】▼▼▼
-        # 1. 獲取 .env 中設定的相對路徑
+        # 1. 獲取憑證的相對路徑
         relative_cert_path = os.getenv("ES_CERT_PATH")
 
         if not all([ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD, relative_cert_path]):
             raise ValueError("Elasticsearch 的環境變數未完整設定！")
 
-        # 2. 根據當前檔案 (__file__) 的位置，計算出專案根目錄
-        #    - Path(__file__) -> .../backend/services/elasticsearch_service.py
-        #    - .parent -> .../backend/services/
-        #    - .parent -> .../backend/
-        #    - .parent -> .../ (專案根目錄)
         project_root = Path(__file__).parent.parent.parent
 
         # 3. 將專案根目錄與相對路徑結合，得到絕對路徑
@@ -52,7 +46,6 @@ class ElasticsearchService:
             # 在初始化時就檢查檔案是否存在，提前失敗
             self.logger.error(f"嚴重錯誤：在路徑 '{CERT_PATH}' 找不到 Elasticsearch 憑證檔案！")
             raise FileNotFoundError(f"在路徑 '{CERT_PATH}' 找不到 Elasticsearch 憑證檔案！")
-        # ▲▲▲【核心修正 1 結束】▲▲▲
 
         # Elasticsearch connection URL for ElasticsearchStore
         self.es_url = f"https://{ES_USERNAME}:{ES_PASSWORD}@{ES_HOST}:{ES_PORT}"
@@ -99,16 +92,12 @@ class ElasticsearchService:
         """Test Elasticsearch connection"""
         try:
             info = self.client.info()
-            self.logger.info(f"✅ Connected to Elasticsearch: {info['version']['number']}")
+            self.logger.info(f"Connected to Elasticsearch: {info['version']['number']}")
             return True
         except Exception as e:
-            self.logger.error(f"❌ Failed to connect to Elasticsearch: {e}")
-            # ▼▼▼【核心修正 2：確保異常被拋出】▼▼▼
-            # 不再只回傳 False，而是將原始異常重新拋出，以便上層 (main.py) 可以捕捉到。
+            self.logger.error(f"Failed to connect to Elasticsearch: {e}")
             raise e
-            # ▲▲▲【核心修正 2 結束】▲▲▲
 
-    # ... (檔案中其餘的函式保持不變) ...
     def get_vector_store(self, index_name: str) -> ElasticsearchStore:
         """Get or create ElasticsearchStore instance for given index"""
         if index_name not in self.vector_stores:
@@ -129,7 +118,7 @@ class ElasticsearchService:
             self.logger.info(f"🗑️  Deleted {response['deleted']} documents from {index_name}")
             return True
         except Exception as e:
-            self.logger.error(f"❌ Failed to delete documents from {index_name}: {e}")
+            self.logger.error(f"Failed to delete documents from {index_name}: {e}")
             return False
 
     def process_xlsx_file(self, file_path: str) -> List[Document]:
@@ -171,7 +160,7 @@ class ElasticsearchService:
                 )
                 documents.append(full_doc)
         except Exception as e:
-            self.logger.error(f"❌ Error processing Excel file {file_path}: {e}")
+            self.logger.error(f"Error processing Excel file {file_path}: {e}")
             raise
         return documents
 
@@ -194,7 +183,7 @@ class ElasticsearchService:
                 )
                 documents.append(doc)
         except Exception as e:
-            self.logger.error(f"❌ Error processing text file {file_path}: {e}")
+            self.logger.error(f"Error processing text file {file_path}: {e}")
             raise
         return documents
 
@@ -227,7 +216,7 @@ class ElasticsearchService:
             )
             documents.append(full_doc)
         except Exception as e:
-            self.logger.error(f"❌ Error processing YAML file {file_path}: {e}")
+            self.logger.error(f"Error processing YAML file {file_path}: {e}")
             raise
         return documents
 
@@ -291,7 +280,7 @@ class ElasticsearchService:
                     if new_documents:
                         vector_store.add_documents(new_documents, ids=new_doc_ids)
                         self.logger.info(
-                            f"✅ Added {len(new_documents)} new documents (skipped {len(existing_ids)} existing)")
+                            f"Added {len(new_documents)} new documents (skipped {len(existing_ids)} existing)")
                         return True
                     else:
                         self.logger.info("ℹ️  No new documents to add - all documents already exist")
@@ -303,10 +292,10 @@ class ElasticsearchService:
                     return True
             else:
                 vector_store.add_documents(documents)
-                self.logger.info(f"✅ Added {len(documents)} documents to index")
+                self.logger.info(f"Added {len(documents)} documents to index")
                 return True
         except Exception as e:
-            self.logger.error(f"❌ Failed to upload documents: {e}")
+            self.logger.error(f"Failed to upload documents: {e}")
             return False
 
     def upload_file(self, file_path: str, index_name: str, check_duplicates: bool = True) -> bool:
@@ -317,10 +306,10 @@ class ElasticsearchService:
             if documents:
                 return self.upload_documents(documents, index_name, check_duplicates)
             else:
-                self.logger.warning(f"⚠️  No documents generated from {file_path}")
+                self.logger.warning(f"No documents generated from {file_path}")
                 return True
         except Exception as e:
-            self.logger.error(f"❌ Failed to upload file {file_path}: {e}")
+            self.logger.error(f"Failed to upload file {file_path}: {e}")
             return False
 
     def upload_multiple_files(self, file_paths: List[str], index_name: str,
@@ -338,16 +327,16 @@ class ElasticsearchService:
                 if self.upload_file(file_path, index_name, check_duplicates):
                     success_count += 1
                 else:
-                    self.logger.error(f"❌ Failed to process: {file_path}")
+                    self.logger.error(f"Failed to process: {file_path}")
             self.logger.info(f"🎉 Upload completed! {success_count}/{total_files} files processed successfully.")
             try:
                 stats = self.client.count(index=index_name)
-                self.logger.info(f"📊 Total documents in index '{index_name}': {stats['count']}")
+                self.logger.info(f"Total documents in index '{index_name}': {stats['count']}")
             except Exception as e:
-                self.logger.warning(f"⚠️  Could not retrieve index stats: {e}")
+                self.logger.warning(f"Could not retrieve index stats: {e}")
             return success_count == total_files
         except Exception as e:
-            self.logger.error(f"❌ Upload process failed: {e}")
+            self.logger.error(f"Upload process failed: {e}")
             return False
 
     def search_documents(self, query: str, index_name: str, k: int = 5) -> List[Document]:
@@ -356,7 +345,7 @@ class ElasticsearchService:
             vector_store = self.get_vector_store(index_name)
             return vector_store.similarity_search(query, k=k)
         except Exception as e:
-            self.logger.error(f"❌ Search failed: {e}")
+            self.logger.error(f"Search failed: {e}")
             return []
 
     def search_with_score(self, query: str, index_name: str, k: int = 5) -> List[tuple]:
@@ -365,7 +354,7 @@ class ElasticsearchService:
             vector_store = self.get_vector_store(index_name)
             return vector_store.similarity_search_with_score(query, k=k)
         except Exception as e:
-            self.logger.error(f"❌ Search with score failed: {e}")
+            self.logger.error(f"Search with score failed: {e}")
             return []
 
     async def get_agent_json(self, index_name: str = "my_agent_versions") -> Dict:
