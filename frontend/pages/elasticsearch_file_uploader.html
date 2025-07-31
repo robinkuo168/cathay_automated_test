@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>檔案上傳工具</title>
-    <!-- 引用統一的 CSS 檔案 -->
     <link rel="stylesheet" href="/assets/css/style.css">
 </head>
-<!-- 為 body 新增一個 class，方便在 style.css 中進行特定頁面的樣式覆蓋 -->
 <body class="uploader-page">
     <div class="upload-container">
         <div class="header">
@@ -21,18 +19,20 @@
         </div>
 
         <!-- Simplified Configuration -->
-        <div class="simple-config">
-            <div class="form-group">
+        <div class="simple-config" >
+            <div class="form-group" style="display: none;">
                 <label for="indexName">索引名稱</label>
                 <input type="text" id="indexName" value="cathay_project1_chunks" placeholder="cathay_project1_chunks">
             </div>
 
             <div class="form-group">
-                <label for="deleteExisting">資料處理方式</label>
-                <select id="deleteExisting">
-                    <option value="false">新增至現有資料</option>
-                    <option value="true">先清除所有現有資料</option>
-                </select>
+                <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                    <label for="deleteExisting" style="margin-bottom: 0; flex-shrink: 0;">資料處理方式</label>
+                    <select id="deleteExisting">
+                        <option value="false">新增至現有資料</option>
+                        <option value="true">先清除所有現有資料</option>
+                    </select>
+                </div>
             </div>
         </div>
 
@@ -59,7 +59,6 @@
         <div class="status-message" id="statusMessage"></div>
     </div>
 
-    <!-- 引用我們自己的 JS 檔案 -->
     <script src="/assets/js/elasticsearch_file_uploader.js"></script>
 </body>
 </html>

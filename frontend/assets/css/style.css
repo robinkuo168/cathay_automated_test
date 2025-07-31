@@ -1422,3 +1422,29 @@ body.uploader-page {
         padding: 20px;
     }
 }
+
+/* Floating Action Button (FAB) Styles */
+.fab {
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 60px;
+    height: 60px;
+    background-color: #00a54f; /* 品牌綠 */
+    color: white;
+    border-radius: 50%;
+    text-decoration: none;
+    font-size: 28px; /* 圖示大小 */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+    z-index: 1000; /* 確保在最上層 */
+}
+
+.fab:hover {
+    transform: scale(1.1) rotate(10deg);
+    background-color: #00873a; /* 深一點的品牌綠 */
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
