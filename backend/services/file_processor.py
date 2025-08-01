@@ -4,17 +4,32 @@ import pandas as pd
 from typing import List, Dict, Optional, Any
 from io import StringIO
 import numpy as np
+import math
 from .logger import get_logger
 
 class FileProcessorService:
     def __init__(self):
+        """
+        初始化 FileProcessorService。
+
+        此建構函式會設定服務所需的依賴項和配置，例如日誌記錄器、
+        支援的檔案編碼列表、最大檔案大小限制等，為後續的文件處理操作做準備。
+        """
         self.logger = get_logger(__name__)
         self.supported_encodings = ['utf-8', 'big5', 'gbk', 'cp1252', 'latin1']
         self.max_file_size = 10 * 1024 * 1024  # 10MB
         self.max_preview_length = 2000
 
     async def process_uploaded_files(self, files) -> List[Dict]:
-        """處理上傳的檔案"""
+        """
+        處理一個包含多個上傳檔案的列表，是此服務的主要進入點。
+
+        此函式會非同步地迭代所有傳入的檔案，對每個檔案進行大小檢查，
+        然後呼叫 `_process_single_file` 進行獨立處理。
+        它能優雅地處理單一檔案的失敗，確保一個檔案的錯誤不會中斷整個批次處理。
+        :param files: 一個從 FastAPI 接收到的 UploadFile 物件列表。
+        :return: 一個字典列表，其中每個字典代表一個檔案的處理結果。
+        """
         processed_files = []
 
         for file in files:
@@ -49,7 +64,14 @@ class FileProcessorService:
         return processed_files
 
     async def _process_single_file(self, file) -> Optional[Dict]:
-        """處理單一檔案"""
+        """
+        根據檔案類型，將單一檔案的處理分派給對應的專用函式。
+
+        這是一個調度函式 (dispatcher)，它會讀取檔案的位元組內容，
+        並根據檔案的副檔名 (如 .csv, .json) 呼叫相應的 `_process_*_file` 方法。
+        :param file: 一個 FastAPI 的 UploadFile 物件。
+        :return: 一個包含處理結果的字典，如果檔案為空或處理失敗則返回 None。
+        """
         try:
             content_bytes = await file.read()
             if not content_bytes:
@@ -80,7 +102,15 @@ class FileProcessorService:
             return None
 
     def _process_csv_file(self, content_bytes: bytes, filename: str) -> Dict:
-        """處理 CSV 檔案"""
+        """
+        專門處理 CSV 檔案的內容。
+
+        此函式負責將 CSV 檔案的位元組內容解碼為文字，使用 pandas 函式庫進行健壯的解析
+        （能自動嘗試多種分隔符），然後清理資料並提取結構化資訊，如欄位、行數和資料範例。
+        :param content_bytes: 檔案的原始位元組內容。
+        :param filename: 原始檔案名稱，用於日誌和回傳。
+        :return: 一個包含 CSV 結構化分析結果的字典。
+        """
         try:
             # 嘗試解碼
             text_content = self._decode_content(content_bytes, filename)
@@ -134,7 +164,15 @@ class FileProcessorService:
             }
 
     def _process_json_file(self, content_bytes: bytes, filename: str) -> Dict:
-        """處理 JSON 檔案"""
+        """
+        專門處理 JSON 檔案的內容。
+
+        此函式負責將 JSON 檔案的位元組內容解碼為文字，解析為 Python 物件，
+        清理無效值（如 NaN），並進一步分析其結構和其中包含的 JMeter 風格變數。
+        :param content_bytes: 檔案的原始位元組內容。
+        :param filename: 原始檔案名稱，用於日誌和回傳。
+        :return: 一個包含 JSON 內容、結構分析和變數列表的字典。
+        """
         try:
             # 解碼內容
             text_content = self._decode_content(content_bytes, filename)
@@ -180,7 +218,15 @@ class FileProcessorService:
             }
 
     def _process_text_file(self, content_bytes: bytes, filename: str) -> Dict:
-        """處理文字檔案"""
+        """
+        專門處理純文字檔案（如 .txt, .log）的內容。
+
+        此函式負責將檔案的位元組內容解碼為文字，並對其進行基本的統計分析，
+        例如計算行數、字元數和非空行數。
+        :param content_bytes: 檔案的原始位元組內容。
+        :param filename: 原始檔案名稱，用於日誌和回傳。
+        :return: 一個包含文字內容基本分析結果的字典。
+        """
         try:
             # 解碼內容
             text_content = self._decode_content(content_bytes, filename)
@@ -217,7 +263,15 @@ class FileProcessorService:
             }
 
     def _decode_content(self, content_bytes: bytes, filename: str) -> Optional[str]:
-        """嘗試解碼檔案內容"""
+        """
+        一個健壯的工具函式，用於將位元組內容解碼為字串。
+
+        它會按順序嘗試多種常見的編碼格式（如 utf-8, big5），直到成功為止。
+        這大大提高了處理來自不同系統的檔案時的成功率。
+        :param content_bytes: 檔案的原始位元組內容。
+        :param filename: 原始檔案名稱，僅用於日誌記錄。
+        :return: 解碼後的字串，如果所有嘗試都失敗則返回 None。
+        """
         for encoding in self.supported_encodings:
             try:
                 text_content = content_bytes.decode(encoding)
@@ -230,7 +284,14 @@ class FileProcessorService:
         return None
 
     def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """清理 DataFrame 中的問題值"""
+        """
+        一個資料清理工具函式，用於處理 pandas DataFrame 中的常見問題值。
+
+        它會填充缺失值（NaN），並將數值欄位中的無限大（inf）替換為 0，
+        確保後續處理和序列化不會出錯。
+        :param df: 一個 pandas DataFrame 物件。
+        :return: 一個清理後的 DataFrame 副本。
+        """
         df_cleaned = df.copy()
 
         # 處理不同資料類型的欄位
@@ -247,7 +308,14 @@ class FileProcessorService:
         return df_cleaned
 
     def _clean_string_value(self, value: str) -> str:
-        """清理字串值"""
+        """
+        一個工具函式，用於清理單一字串值。
+
+        它會移除字串中可能導致後續處理（特別是 XML 或 JSON 生成）失敗的
+        不可見控制字元。
+        :param value: 要清理的原始字串。
+        :return: 清理後的字串。
+        """
         if pd.isna(value) or value is None:
             return ''
 
@@ -259,7 +327,14 @@ class FileProcessorService:
         return cleaned
 
     def _clean_json_data(self, obj):
-        """遞歸清理 JSON 資料中的問題值"""
+        """
+        一個遞迴的工具函式，用於深度清理已解析的 JSON 物件。
+
+        它會遍歷字典和列表，主要目的是將 Python 中合法但在標準 JSON 中非法的
+        浮點數值（如 NaN, Infinity）轉換為 `None`。
+        :param obj: 要清理的 Python 物件（字典或列表）。
+        :return: 清理後的物件。
+        """
         if isinstance(obj, dict):
             return {key: self._clean_json_data(value) for key, value in obj.items()}
         elif isinstance(obj, list):
@@ -274,7 +349,13 @@ class FileProcessorService:
             return obj
 
     def _extract_json_variables(self, json_obj) -> List[str]:
-        """從 JSON 中提取 JMeter 變數"""
+        """
+        一個遞迴的工具函式，用於從已解析的 JSON 物件中深度提取所有 JMeter 風格的變數。
+
+        它會遍歷整個物件結構，尋找所有形如 `${...}` 的字串，並收集這些變數的名稱。
+        :param json_obj: 要分析的 Python 物件（字典或列表）。
+        :return: 一個包含所有找到的唯一變數名稱的列表。
+        """
         variables = set()
 
         def extract_vars(obj):
@@ -297,7 +378,14 @@ class FileProcessorService:
         return sorted(list(variables))
 
     def _analyze_json_structure(self, json_obj) -> Dict:
-        """分析 JSON 結構"""
+        """
+        一個遞迴的工具函式，用於分析 JSON 物件的結構。
+
+        它會生成一個描述 JSON 結構的巢狀字典，包含每個層級的類型、鍵、長度等資訊，
+        並對內容進行取樣以避免結果過於龐大。
+        :param json_obj: 要分析的 Python 物件（字典或列表）。
+        :return: 一個描述 JSON 結構的字典。
+        """
 
         def analyze_object(obj, depth=0):
             if depth > 10:  # 防止過深的遞歸
@@ -333,7 +421,14 @@ class FileProcessorService:
                 return {"type": "error", "message": str(e)}
 
     def _get_content_preview(self, content: str) -> str:
-        """獲取內容預覽"""
+        """
+        一個工具函式，用於生成一個安全的、用於預覽的內容摘要。
+
+        它會截取內容的前 N 個字元，移除可能破壞前端顯示的控制字元，
+        並在內容被截斷時加上省略號。
+        :param content: 完整的原始文字內容。
+        :return: 一個安全、簡短的預覽字串。
+        """
         if not content:
             return ""
 

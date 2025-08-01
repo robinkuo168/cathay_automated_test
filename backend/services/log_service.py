@@ -6,13 +6,28 @@ from .logger import get_logger
 
 class LogService:
     def __init__(self, max_logs: int = 1000):
+        """
+        初始化 LogService。
+
+        此建構函式會設定一個用於在記憶體中儲存日誌的列表、
+        最大日誌數量的限制，以及一個執行緒鎖 (lock) 來確保多執行緒環境下的操作安全。
+        :param max_logs: 要在記憶體中保留的最大日誌條數。
+        """
         self.logs = []
         self.max_logs = max_logs
         self._lock = threading.Lock()
         self.logger = get_logger(__name__)
 
     def add_log(self, level: str, message: str, extra_data: Dict = None):
-        """添加日誌記錄"""
+        """
+        添加一條新的日誌記錄到記憶體中，並同時寫入到系統的標準日誌。
+
+        此函式是執行緒安全的。它會創建一個包含時間戳、級別和訊息的結構化日誌條目，
+        並在日誌數量超過上限時，自動移除最舊的記錄以維持列表大小。
+        :param level: 日誌的嚴重性級別 (例如 "INFO", "ERROR")。
+        :param message: 日誌的訊息內容。
+        :param extra_data: (可選) 一個字典，用於附加任何額外的結構化資訊。
+        """
         try:
             with self._lock:
                 log_entry = {
@@ -41,7 +56,14 @@ class LogService:
             self.logger.error(f"添加日誌失敗: {e}")
 
     def get_logs(self, limit: int = 50, level_filter: str = None) -> List[Dict]:
-        """獲取日誌記錄"""
+        """
+        從記憶體中獲取日誌記錄。
+
+        此函式可以根據指定的數量限制和嚴重性級別來過濾日誌，並總是返回最新的記錄。
+        :param limit: 要返回的最大日誌條數。
+        :param level_filter: (可選) 用於過濾日誌的級別字串 (例如 "ERROR")。
+        :return: 一個包含日誌條目字典的列表。
+        """
         try:
             with self._lock:
                 logs = self.logs.copy()
@@ -58,7 +80,11 @@ class LogService:
             return []
 
     def clear_logs(self):
-        """清空日誌"""
+        """
+        清空所有儲存在記憶體中的日誌記錄。
+
+        這是一個執行緒安全的操作，用於重置日誌服務的狀態。
+        """
         try:
             with self._lock:
                 cleared_count = len(self.logs)
@@ -68,7 +94,11 @@ class LogService:
             self.logger.error(f"清空日誌失敗: {e}")
 
     def get_log_statistics(self) -> Dict:
-        """獲取日誌統計資訊"""
+        """
+        計算並獲取關於當前記憶體中日誌的統計資訊。
+
+        :return: 一個包含總數、按級別分類的計數、最近的錯誤訊息等統計數據的字典。
+        """
         try:
             with self._lock:
                 logs = self.logs.copy()
@@ -110,7 +140,13 @@ class LogService:
             return {"error": str(e)}
 
     def export_logs(self, format_type: str = "json") -> str:
-        """匯出日誌"""
+        """
+        將所有儲存在記憶體中的日誌匯出為指定格式的字串。
+
+        :param format_type: 想要的匯出格式，支援 "json" 或 "csv"。
+        :return: 一個包含所有日誌內容的字串。
+        :raises ValueError: 如果請求了不支援的匯出格式。
+        """
         try:
             with self._lock:
                 logs = self.logs.copy()

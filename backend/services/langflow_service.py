@@ -19,12 +19,21 @@ class LangFlowAPIKeyManager:
     """
 
     def __init__(self, base_url: str):
+        """
+        初始化 LangFlow API 金鑰管理器。
+
+        :param base_url: Langflow 服務的基礎 URL。
+        """
         self.base_url = base_url.rstrip('/')
         # 將 API 金鑰儲存在一個簡單的文字檔中
         self.api_key_file = 'langflow_api_key.txt'
 
     def load_api_key(self) -> Optional[str]:
-        """從本地檔案載入 API 金鑰。"""
+        """
+        從本地檔案載入已儲存的 API 金鑰。
+
+        :return: 一個包含 API 金鑰的字串，如果檔案不存在或為空則返回 None。
+        """
         if os.path.exists(self.api_key_file):
             with open(self.api_key_file, 'r') as f:
                 key = f.read().strip()
@@ -34,13 +43,24 @@ class LangFlowAPIKeyManager:
         return None
 
     def save_api_key(self, api_key: str):
-        """將新的 API 金鑰儲存到本地檔案。"""
+        """
+        將一個新的 API 金鑰寫入本地檔案進行持久化儲存。
+
+        :param api_key: 要儲存的 API 金鑰字串。
+        """
         with open(self.api_key_file, 'w') as f:
             f.write(api_key)
         logger.info(f"新的 API 金鑰已成功儲存至 '{self.api_key_file}'。")
 
     async def generate_api_key(self, key_name: Optional[str] = None) -> Optional[str]:
-        """產生一個新的 API 金鑰。"""
+        """
+        透過呼叫 Langflow API 來產生一個新的 API 金鑰。
+
+        此函式包含了重試邏輯，會嘗試多個常見的 API 端點路徑 (`/api_key/`, `/api-key/`)
+        以提高與不同 Langflow 版本的相容性。
+        :param key_name: (可選) 要為新金鑰指定的名稱。
+        :return: 一個包含新 API 金鑰的字串，如果產生失敗則返回 None。
+        """
         if not key_name:
             key_name = f"main-api-key-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
@@ -65,7 +85,14 @@ class LangFlowAPIKeyManager:
         return None
 
     async def test_api_key(self, api_key: str) -> bool:
-        """測試一個 API 金鑰是否有效。"""
+        """
+        測試一個給定的 API 金鑰是否有效。
+
+        它會使用此金鑰嘗試訪問一個受保護的 Langflow 端點 (`/api/v1/flows`)，
+        並根據 HTTP 狀態碼判斷金鑰是否有效。
+        :param api_key: 要測試的 API 金鑰。
+        :return: 如果金鑰有效，返回 True，否則返回 False。
+        """
         if not api_key:
             return False
         try:
@@ -82,8 +109,14 @@ class LangFlowAPIKeyManager:
 
     async def setup_api_key(self) -> Optional[str]:
         """
-        設定 API 金鑰的核心邏輯。
-        它會先嘗試載入並測試現有的金鑰，如果失敗，才會產生新的金鑰。
+        設定 API 金鑰的核心流程。
+
+        這是一個協調函式，它會依序執行以下操作：
+        1. 嘗試從本地檔案載入現有的金鑰。
+        2. 如果找到，則測試其有效性。
+        3. 如果現有金鑰無效或不存在，則呼叫 API 產生一個新的金鑰。
+        4. 測試新產生的金鑰，如果有效，則將其儲存到本地檔案。
+        :return: 一個有效的 API 金鑰字串，如果所有步驟都失敗則返回 None。
         """
         logger.info("🚀 正在設定 API 金鑰...")
 
@@ -110,7 +143,13 @@ class LangFlowAPIKeyManager:
 
 class LangflowService:
     def __init__(self):
-        # 從環境變數讀取設定
+        """
+        初始化 LangflowService。
+
+        此建構函式會從環境變數讀取 Langflow 的基礎 URL 和專案名稱，
+        並初始化一個 `LangFlowAPIKeyManager` 實例來管理 API 金鑰。
+        :raises ValueError: 如果 `LANGFLOW_BASE_URL` 環境變數未設定。
+        """
         self.base_url = os.getenv("LANGFLOW_BASE_URL")
         self.project_name = os.getenv("LANGFLOW_PROJECT_NAME")
 
@@ -123,7 +162,11 @@ class LangflowService:
         self.api_key_manager = LangFlowAPIKeyManager(self.base_url)
 
     async def setup_api_key(self) -> bool:
-        """使用新的管理器設定 API 金鑰。"""
+        """
+        一個方便的包裝函式，用於執行 API 金鑰的設定流程。
+
+        :return: 如果成功設定了有效的 API 金鑰，返回 True，否則返回 False。
+        """
         api_key = await self.api_key_manager.setup_api_key()
         if api_key:
             self.api_key = api_key
@@ -131,7 +174,14 @@ class LangflowService:
         return False
 
     async def get_project_id(self) -> str:
-        """Fetch project ID from Langflow API"""
+        """
+        從 Langflow API 獲取目標專案的 ID。
+
+        如果環境變數中設定了 `LANGFLOW_PROJECT_NAME`，它會尋找同名的專案；
+        否則，它會直接使用 API 回傳的第一個專案。
+        :return: 專案的唯一 ID 字串。
+        :raises Exception: 如果在 Langflow 中找不到任何專案。
+        """
         url = f"{self.base_url}/api/v1/projects/"
         headers = {"x-api-key": self.api_key}
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -150,7 +200,11 @@ class LangflowService:
             return project["id"]
 
     async def get_latest_flow_id(self) -> Optional[str]:
-        """Fetch the latest flow ID from the project"""
+        """
+        從指定的專案中，獲取最新建立或更新的流程 (Flow) 的 ID。
+
+        :return: 最新流程的 ID 字串，如果專案中沒有任何流程則返回 None。
+        """
         if not self.project_id:
             self.project_id = await self.get_project_id()
 
@@ -172,13 +226,16 @@ class LangflowService:
 
     async def initialize_flow(self):
         """
-        初始化或刷新 Langflow 服務。
-        此過程包含：
-        1. 確保設定了有效的 API 金鑰。
-        2. 刪除最新的流程以確保狀態乾淨。
-        3. 從 Elasticsearch 獲取最新的代理 (Agent) 定義。
-        4. 將新的代理定義作為新流程上傳到 Langflow。
-        5. 更新服務以使用新建立的流程 ID。
+        初始化或刷新 Langflow 服務的總指揮。
+
+        這是一個關鍵的啟動流程，負責確保聊天機器人處於最新的、可運作的狀態。它包含以下步驟：
+        1. 確保 API 金鑰已設定且有效。
+        2. 獲取專案 ID。
+        3. 刪除專案中最新的流程，以確保狀態乾淨。
+        4. 從 Elasticsearch 獲取最新的代理 (Agent) 定義。
+        5. 將新的代理定義作為新流程上傳到 Langflow。
+        6. 更新服務以使用這個新建立的流程 ID。
+        :raises Exception: 如果在任何一個關鍵步驟失敗，例如無法設定 API 金鑰或上傳流程。
         """
         logger.info("🔧 正在初始化或刷新 Langflow 流程...")
 
@@ -238,7 +295,12 @@ class LangflowService:
         logger.info(f"🎉 流程初始化完成。服務現在使用流程 ID: {self.chat_flow_id}")
 
     async def delete_flow(self, flow_id: str) -> bool:
-        """根據 ID 刪除一個流程"""
+        """
+        根據指定的 ID，從 Langflow 中刪除一個流程。
+
+        :param flow_id: 要刪除的流程的唯一 ID。
+        :return: 如果刪除成功，返回 True，否則返回 False。
+        """
         url = f"{self.base_url}/api/v1/flows/{flow_id}"
         headers = {"x-api-key": self.api_key}
         logger.info(f"正在刪除流程，ID: {flow_id}")
@@ -252,13 +314,24 @@ class LangflowService:
                 return False
 
     async def update_flow_id(self, new_flow_id: str):
-        """更新服務實例中的 chat_flow_id。"""
+        """
+        更新服務實例中，當前用於聊天的流程 ID。
+
+        :param new_flow_id: 新的流程 ID 字串。
+        """
         old_flow_id = self.chat_flow_id
         self.chat_flow_id = new_flow_id
         logger.info(f"流程 ID 已從 {old_flow_id} 更新為 {new_flow_id}")
 
     async def upload_flow_from_bytes(self, json_bytes: bytes, filename: str = "agent-flow.json") -> Dict:
-        """從位元組上傳一個流程到 Langflow。"""
+        """
+        將一個以位元組 (bytes) 形式存在的流程定義檔案，上傳至 Langflow。
+
+        :param json_bytes: 包含流程定義 JSON 的位元組內容。
+        :param filename: (可選) 在上傳請求中為此檔案指定的名稱。
+        :return: 一個包含 Langflow API 回應的字典。
+        :raises HTTPException: 如果上傳請求失敗。
+        """
         if not self.project_id:
             self.project_id = await self.get_project_id()
 
@@ -279,7 +352,17 @@ class LangflowService:
             raise HTTPException(status_code=500, detail=f"上傳時發生網路錯誤: {error_text}")
 
     async def send_chat_message(self, message: str, session_id: str) -> str:
-        """發送聊天訊息到 Langflow 並獲取回應。"""
+        """
+        將使用者的聊天訊息發送到當前啟用的 Langflow 流程，並獲取機器人的回應。
+
+        此函式負責建構 Langflow API 所需的請求主體 (payload)，發送請求，
+        並對複雜的 JSON 回應進行健壯的解析，以提取出最終的聊天回覆文字。
+        它包含了多種備用解析策略，以應對 Langflow 可能的不同回應格式。
+        :param message: 使用者輸入的訊息字串。
+        :param session_id: 當前對話的唯一會話 ID。
+        :return: 機器人回覆的文字內容。
+        :raises HTTPException: 如果聊天服務未初始化、請求超時、或無法從 Langflow 的回應中解析出有效的回覆。
+        """
         if not self.chat_flow_id:
             raise HTTPException(status_code=503, detail="聊天服務未初始化，沒有設定流程 ID。")
 

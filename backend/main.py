@@ -30,7 +30,11 @@ from backend.services.langflow_service import LangflowService
 
 def setup_logging():
     """
-    在應用程式啟動時設定全域日誌。
+    在應用程式啟動時設定全域日誌記錄器 (Logger)。
+
+    此函式會配置根日誌記錄器 (root logger)，設定其日誌等級為 INFO，
+    並添加一個將日誌輸出到標準輸出 (stdout) 的處理器 (handler)。
+    它還會清除任何已存在的處理器，以防止在開發模式下 (如 uvicorn --reload) 重複添加。
     """
     # 取得根日誌記錄器
     root_logger = logging.getLogger()
@@ -74,10 +78,14 @@ _langflow_service_lock = threading.Lock()
 
 def get_llm_service(model_name: str = "default", config: Optional[Dict] = None) -> LLMService:
     """
-    獲取或創建指定名稱的 LLMService 實例
-    :param model_name: 模型名稱，用於區分不同的實例
-    :param config: 可選的配置字典，用於自定義模型參數
-    :return: LLMService 實例
+    獲取或創建一個執行緒安全的 LLMService 實例 (工廠函式)。
+
+    此函式使用單例模式 (Singleton) 和鎖 (lock) 來確保對於同一個 `model_name`，
+    在整個應用程式生命週期中只會創建一個 LLMService 實例，從而避免資源浪費。
+    :param model_name: 模型服務的唯一名稱，用於區分不同的 LLM 設定。
+    :param config: 可選的配置字典，用於在首次創建時自定義模型參數。
+    :return: 一個 LLMService 的實例。
+    :raises Exception: 如果 LLM 服務在初始化過程中失敗。
     """
     global _llm_services
 
@@ -96,9 +104,13 @@ def get_llm_service(model_name: str = "default", config: Optional[Dict] = None) 
 @lru_cache(maxsize=1)
 def get_jmx_service(model_name: str = "default") -> JMXGeneratorService:
     """
-    獲取 JMX 服務實例，可以指定使用的 LLM 模型
-    :param model_name: 要使用的 LLM 模型名稱
-    :return: JMXGeneratorService 實例
+    獲取或創建一個執行緒安全的 JMXGeneratorService 實例 (工廠函式)。
+
+    此函式使用單例模式和 lru_cache 來確保 JMX 服務的默認實例只被創建一次。
+    如果指定了非默認的 `model_name`，則會創建一個新的、使用特定 LLM 的服務實例。
+    :param model_name: 要使用的底層 LLM 服務名稱。
+    :return: 一個 JMXGeneratorService 的實例。
+    :raises Exception: 如果 JMX 服務在初始化過程中失敗。
     """
     global _jmx_service
 
@@ -128,7 +140,13 @@ def get_jmx_service(model_name: str = "default") -> JMXGeneratorService:
 
 @lru_cache(maxsize=1)
 def get_doc_processor_service():
-    """執行緒安全的 DocumentProcessorService 初始化"""
+    """
+    獲取或創建一個執行緒安全的 DocumentProcessorService 實例 (工廠函式)。
+
+    使用單例模式和 lru_cache 確保服務只被初始化一次。
+    :return: 一個 DocumentProcessorService 的實例。
+    :raises Exception: 如果服務在初始化過程中失敗。
+    """
     global _doc_processor_service
     if _doc_processor_service is None:
         with _doc_processor_service_lock:
@@ -143,7 +161,14 @@ def get_doc_processor_service():
 
 @lru_cache(maxsize=1)
 def get_spec_analysis_service():
-    """執行緒安全的 SpecAnalysisService 初始化"""
+    """
+    獲取或創建一個執行緒安全的 SynDataGenService 實例 (工廠函式)。
+
+    此服務專門用於從文件中提取規格 (Header/Body)。
+    使用單例模式和 lru_cache 確保服務只被初始化一次。
+    :return: 一個 SynDataGenService 的實例。
+    :raises Exception: 如果服務在初始化過程中失敗。
+    """
     global _spec_analysis_service
     if _spec_analysis_service is None:
         with _spec_analysis_service_lock:
@@ -159,7 +184,13 @@ def get_spec_analysis_service():
 
 @lru_cache(maxsize=1)
 def get_elasticsearch_service() -> ElasticsearchService:
-    """執行緒安全的 ElasticsearchService 初始化"""
+    """
+    獲取或創建一個執行緒安全的 ElasticsearchService 實例 (工廠函式)。
+
+    使用單例模式和 lru_cache 確保服務只被初始化一次。
+    :return: 一個 ElasticsearchService 的實例。
+    :raises Exception: 如果服務在初始化過程中失敗。
+    """
     global _elasticsearch_service
     if _elasticsearch_service is None:
         with _elasticsearch_service_lock:
@@ -174,7 +205,13 @@ def get_elasticsearch_service() -> ElasticsearchService:
 
 @lru_cache(maxsize=1)
 def get_langflow_service() -> LangflowService:
-    """執行緒安全的 LangflowService 初始化"""
+    """
+    獲取或創建一個執行緒安全的 LangflowService 實例 (工廠函式)。
+
+    使用單例模式和 lru_cache 確保服務只被初始化一次。
+    :return: 一個 LangflowService 的實例。
+    :raises Exception: 如果服務在初始化過程中失敗。
+    """
     global _langflow_service
     if _langflow_service is None:
         with _langflow_service_lock:
@@ -209,7 +246,14 @@ except Exception as e:
     log_service = None
 
 def get_report_analysis_service():
-    """延遲初始化報告分析服務"""
+    """
+    延遲初始化並獲取 ReportAnalysisService 實例。
+
+    此函式採用延遲加載 (lazy loading) 模式，只有在第一次被呼叫時才會真正創建服務實例。
+    這有助於加快應用程式的啟動速度。
+    :return: 一個 ReportAnalysisService 的實例。
+    :raises HTTPException: 如果服務初始化失敗，則會向客戶端返回 500 錯誤。
+    """
     global report_analysis_service
     if report_analysis_service is None:
         try:
@@ -227,7 +271,13 @@ def get_report_analysis_service():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    應用程式生命週期管理。
+    FastAPI 應用程式的生命週期管理器。
+
+    此函式使用 @asynccontextmanager 來管理應用程式的啟動和關閉事件。
+    在 `yield` 之前的程式碼會在應用程式啟動時執行，用於初始化日誌、創建目錄、預加載模型等。
+    在 `yield` 之後的程式碼會在應用程式關閉時執行。
+    :param app: FastAPI 應用程式實例。
+    :raises RuntimeError: 如果在啟動過程中發生任何嚴重錯誤，將阻止應用程式啟動。
     """
     # --- 啟動時執行的程式碼 ---
     setup_logging()
@@ -295,13 +345,25 @@ if os.getenv("APP_ENV") != "production":
     # --- 前端頁面路由 (僅用於本地開發) ---
     @app.get("/", response_class=HTMLResponse)
     async def serve_root_as_index(request: Request):
-        """當訪問根目錄時，直接提供 index.html"""
+        """
+        在本地開發環境中，將根路徑 ("/") 的請求導向到 index.html 頁面。
+        :param request: FastAPI 的 Request 物件。
+        :return: 一個包含 index.html 內容的 TemplateResponse。
+        """
         return templates.TemplateResponse("index.html", {"request": request})
 
 
     @app.get("/pages/{page_name}.html", response_class=HTMLResponse)
     async def serve_html_pages(request: Request, page_name: str):
-        """動態提供 frontend/pages 資料夾中的 HTML 頁面"""
+        """
+        在本地開發環境中，動態提供 `frontend/pages` 目錄下的 HTML 頁面。
+
+        例如，當使用者訪問 `/pages/chatbot_interface.html` 時，此函式會回傳對應的 HTML 檔案。
+        :param request: FastAPI 的 Request 物件。
+        :param page_name: 從 URL 路徑中捕獲的頁面名稱 (不含 .html)。
+        :return: 一個包含請求的 HTML 頁面內容的 TemplateResponse。
+        :raises HTTPException(404): 如果請求的 HTML 檔案不存在。
+        """
         template_path = PROJECT_ROOT / "frontend" / "pages" / f"{page_name}.html"
         if not template_path.is_file():
             raise HTTPException(status_code=404, detail=f"頁面 '{page_name}.html' 不存在")
@@ -322,7 +384,17 @@ app.add_middleware(
 # 請求 ID 中間件
 @app.middleware("http")
 async def add_request_id_middleware(request: Request, call_next):
-    """為每個請求添加唯一 ID"""
+    """
+    一個 FastAPI 中間件，為每個傳入的請求執行以下操作：
+    1. 生成一個唯一的 UUID 作為請求 ID。
+    2. 將請求 ID 存儲在 ContextVar 中，以便在整個請求處理鏈中訪問。
+    3. 計算請求的處理時間。
+    4. 在響應標頭中加入 `X-Request-ID` 和 `X-Process-Time`。
+    5. 記錄請求的詳細資訊 (方法、路徑、狀態碼、處理時間)。
+    :param request: FastAPI 的 Request 物件。
+    :param call_next: 一個函式，用於將請求傳遞給下一個處理程序 (即路徑函式)。
+    :return: 最終的 Response 物件。
+    """
     request_id = str(uuid.uuid4())
     request_id_var.set(request_id)
 
@@ -516,7 +588,14 @@ class ChatResponse(APIResponse):
 
 # 工具函數
 def log_with_request_id(level: str, message: str):
-    """帶請求 ID 的日誌記錄"""
+    """
+    一個工具函式，用於記錄帶有當前請求 ID 的日誌。
+
+    它會從 ContextVar 中獲取當前請求的唯一 ID，並將其附加到日誌訊息的前面，
+    確保在日誌中可以輕鬆追蹤單一請求的完整處理流程。
+    :param level: 日誌等級 (例如 "INFO", "ERROR")。
+    :param message: 要記錄的訊息。
+    """
     request_id = request_id_var.get("unknown")
     if log_service:
         log_service.add_log(level, f"[{request_id}] {message}")
@@ -524,7 +603,17 @@ def log_with_request_id(level: str, message: str):
         logger.log(getattr(logging, level.upper()), f"[{request_id}] {message}")
 
 def create_response(success: bool, message: str, data: Any = None, error: str = None) -> dict:
-    """創建標準響應"""
+    """
+    一個工具函式，用於創建標準化的 API JSON 響應。
+
+    此函式將所有 API 響應統一為固定格式，包含成功狀態、訊息、資料、錯誤和請求 ID，
+    有助於前端統一處理和解析。
+    :param success: 操作是否成功。
+    :param message: 給前端的簡短訊息。
+    :param data: (可選) 成功時要回傳的資料。
+    :param error: (可選) 失敗時的錯誤描述。
+    :return: 一個符合 APIResponse 結構的字典。
+    """
     return {
         "success": success,
         "data": data,
@@ -538,7 +627,15 @@ tasks = {}
 # 全域異常處理器
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """HTTP 異常處理器"""
+    """
+    全域異常處理器，專門捕捉並處理 FastAPI 的 HTTPException。
+
+    當程式碼中任何地方拋出 HTTPException 時 (例如，因輸入驗證失敗而拋出 400 錯誤)，
+    此處理器會攔截它，並回傳一個標準格式的 JSON 錯誤響應。
+    :param request: FastAPI 的 Request 物件。
+    :param exc: 捕獲到的 HTTPException 實例。
+    :return: 一個包含錯誤細節的 JSONResponse。
+    """
     request_id = request_id_var.get("unknown")
     log_with_request_id("ERROR", f"HTTP 異常: {exc.status_code} - {exc.detail}")
 
@@ -553,7 +650,15 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """全域異常處理器"""
+    """
+    全域異常處理器，用於捕捉所有未被處理的預期外錯誤。
+
+    這是一個安全網，確保即使發生了程式碼中未預料到的錯誤，
+    應用程式也不會崩潰，而是會向客戶端回傳一個通用的 500 內部伺服器錯誤響應。
+    :param request: FastAPI 的 Request 物件。
+    :param exc: 捕獲到的 Exception 實例。
+    :return: 一個表示內部伺服器錯誤的 JSONResponse。
+    """
     request_id = request_id_var.get("unknown")
     error_msg = str(exc)
 
@@ -572,7 +677,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 # API 端點
 @app.get("/api", response_model=APIResponse)
 async def root():
-    """根路徑"""
+    """
+    API 的根路徑 (`/api`) 端點。
+
+    主要用於快速檢查 API 服務是否正在運行。
+    :return: 一個包含服務狀態資訊的標準 API 響應。
+    """
     return create_response(
         success=True,
         message="JMeter JMX Generator API 運行中",
@@ -585,7 +695,15 @@ async def root():
 
 @app.get("/api/health", response_model=APIResponse)
 async def health_check():
-    """健康檢查"""
+    """
+    API 的健康檢查 (`/api/health`) 端點。
+
+    提供比根路徑更詳細的健康狀態，包括：
+    - 關鍵環境變數是否已設定。
+    - 各個核心服務 (LLM, JMX, Log 等) 的初始化狀態。
+    :return: 一個包含詳細健康檢查結果的標準 API 響應。
+    :raises HTTPException(500): 如果在檢查過程中發生錯誤。
+    """
     try:
         env_status = {
             "WATSONX_API_KEY": "已設定" if os.getenv("WATSONX_API_KEY") else "未設定",
@@ -646,7 +764,15 @@ async def health_check():
 # JMX 生成端點路徑
 @app.post("/api/generate-jmx", response_model=JMXResponse)
 async def generate_jmx(request: JMXRequest):
-    """生成 JMX 檔案 - 修正端點路徑"""
+    """
+    處理 JMX 檔案生成的 API 端點 (`/api/generate-jmx`)。
+
+    接收使用者的自然語言需求和相關檔案，呼叫 JMXGeneratorService 來生成 JMX 檔案內容。
+    :param request: 包含 `requirements` 和 `files` 的請求主體。
+    :return: 一個包含生成好的 JMX 內容的標準 API 響應。
+    :raises HTTPException(400): 如果使用者輸入的需求驗證失敗。
+    :raises HTTPException(500): 如果在生成過程中發生內部錯誤。
+    """
     try:
         log_with_request_id("INFO", f"開始生成 JMX，需求長度: {len(request.requirements)}")
         service = get_jmx_service()
@@ -686,7 +812,13 @@ async def generate_jmx(request: JMXRequest):
 @app.post("/api/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
     """
-    檔案上傳端點。
+    處理多檔案上傳的 API 端點 (`/api/upload`)。
+
+    接收一個或多個檔案，進行類型和大小檢查，然後將它們保存到伺服器的 `uploads` 目錄。
+    同時，它會讀取檔案內容並在響應中回傳。
+    :param files: 一個從表單中獲取的 UploadFile 物件列表。
+    :return: 一個包含每個檔案上傳狀態和內容的標準 API 響應。
+    :raises HTTPException(500): 如果在檔案處理過程中發生錯誤。
     """
     try:
         log_with_request_id("INFO", f"開始上傳 {len(files)} 個檔案")
@@ -788,7 +920,11 @@ async def upload_files(files: List[UploadFile] = File(...)):
 
 @app.post("/api/validate", response_model=ValidationResponse)
 async def validate_xml(request: XMLValidationRequest):
-    """驗證 XML 格式"""
+    """
+    驗證傳入的 XML 字串格式是否正確的 API 端點 (`/api/validate`)。
+    :param request: 包含 `xml_content` 的請求主體。
+    :return: 一個包含驗證結果 (`valid`, `validation_message`) 的標準 API 響應。
+    """
     try:
         log_with_request_id("INFO", f"開始驗證 XML，內容長度: {len(request.xml_content)}")
 
@@ -826,7 +962,15 @@ async def validate_xml(request: XMLValidationRequest):
 # 報告分析相關端點
 @app.post("/api/preview-analysis", response_model=APIResponse)
 async def preview_analysis(file: UploadFile = File(...)):
-    """預覽分析報告"""
+    """
+    預覽分析效能報告 (Word 檔案) 的 API 端點 (`/api/preview-analysis`)。
+
+    接收一個 Word 檔案，呼叫 ReportAnalysisService 提取報告的關鍵摘要資訊並回傳。
+    :param file: 上傳的 Word 檔案。
+    :return: 一個包含分析預覽結果的標準 API 響應。
+    :raises HTTPException(400): 如果檔案類型或大小不符合要求。
+    :raises HTTPException(500): 如果在分析過程中發生錯誤。
+    """
     try:
         log_with_request_id("INFO", f"開始預覽分析報告: {file.filename}")
 
@@ -893,7 +1037,16 @@ async def preview_analysis(file: UploadFile = File(...)):
 
 @app.post("/api/analyze-performance-report")
 async def analyze_performance_report(file: UploadFile = File(...)):
-    """生成完整的效能分析報告"""
+    """
+    完整分析效能報告並生成新報告的 API 端點 (`/api/analyze-performance-report`)。
+
+    接收一個 Word 檔案，呼叫 ReportAnalysisService 進行深度分析，
+    並生成一份包含分析結果和建議的新 Word 報告，以檔案下載的方式回傳給使用者。
+    :param file: 上傳的 Word 檔案。
+    :return: 一個 StreamingResponse，觸發瀏覽器下載生成的報告檔案。
+    :raises HTTPException(400): 如果檔案類型或大小不符合要求。
+    :raises HTTPException(500): 如果在分析過程中發生錯誤。
+    """
     try:
         log_with_request_id("INFO", f"開始生成效能分析報告: {file.filename}")
 
@@ -1000,7 +1153,12 @@ async def analyze_performance_report(file: UploadFile = File(...)):
 # 獲取系統日誌端點
 @app.get("/api/logs", response_model=LogsResponse)
 async def get_logs(limit: int = 100):
-    """獲取系統日誌"""
+    """
+    獲取系統日誌的 API 端點 (`/api/logs`)。
+    :param limit: 要獲取的最大日誌條數，預設為 100。
+    :return: 一個包含日誌列表的標準 API 響應。
+    :raises HTTPException(503): 如果日誌服務當前不可用。
+    """
     try:
         if not log_service:
             raise HTTPException(
@@ -1030,7 +1188,13 @@ async def get_logs(limit: int = 100):
 # 處理 .docx 文件並提取文字
 @app.post("/api/process-docx", response_model=APIResponse)
 async def process_docx(file: UploadFile = File(...)):
-    """處理上傳的 .docx 文件並提取文字內容"""
+    """
+    處理 .docx 檔案並提取其純文字內容的 API 端點 (`/api/process-docx`)。
+    :param file: 上傳的 .docx 檔案。
+    :return: 一個包含提取出的純文字的標準 API 響應。
+    :raises HTTPException(400): 如果檔案類型或大小不符合要求。
+    :raises HTTPException(500): 如果在檔案處理過程中發生錯誤。
+    """
     try:
         log_with_request_id("INFO", f"開始處理 .docx 檔案: {file.filename}")
 
@@ -1088,7 +1252,13 @@ async def process_docx(file: UploadFile = File(...)):
 @app.post("/api/generate-markdown", response_model=SpecAnalysisResponse)
 async def generate_markdown(text_data: dict):
     """
-    從文件內容中同時提取 Header JSON 範例和 Body Markdown 表格。
+    從純文字內容中並行提取 Header (JSON 格式) 和 Body (Markdown 表格) 的 API 端點 (`/api/generate-markdown`)。
+
+    此端點使用 `asyncio.gather` 來同時啟動兩個 LLM 任務，以提高處理效率。
+    :param text_data: 一個包含 `text` 和 `filename` 的字典。
+    :return: 一個包含 `header_json` 和 `body_markdown` 的標準 API 響應。
+    :raises HTTPException(400): 如果輸入的文字為空。
+    :raises HTTPException(500): 如果在提取過程中發生錯誤。
     """
     try:
         text = text_data.get("text", "")
@@ -1151,7 +1321,13 @@ async def generate_markdown(text_data: dict):
 # 校對 Markdown 表格
 @app.post("/api/review-markdown", response_model=APIResponse)
 async def review_markdown(request: MarkdownReviewRequest):
-    """校對 Markdown 表格"""
+    """
+    根據使用者輸入，校對已生成的 Body Markdown 表格的 API 端點 (`/api/review-markdown`)。
+    :param request: 包含原始 `markdown` 和使用者 `user_input` 的請求主體。
+    :return: 一個包含校對後 Markdown 的標準 API 響應。
+    :raises HTTPException(400): 如果 LLM 在校對過程中返回錯誤。
+    :raises HTTPException(500): 如果在處理過程中發生內部錯誤。
+    """
     try:
         log_with_request_id("INFO", f"開始校對 Markdown 表格")
 
@@ -1194,7 +1370,11 @@ async def review_markdown(request: MarkdownReviewRequest):
 @app.post("/api/review-header-json", response_model=APIResponse)
 async def review_header_json(request: HeaderJsonReviewRequest):
     """
-    根據使用者輸入，校對包含 Header JSON 範例的 Markdown 字串。
+    根據使用者輸入，校對已生成的 Header JSON 範例的 API 端點 (`/api/review-header-json`)。
+    :param request: 包含原始 `header_markdown` 和使用者 `user_input` 的請求主體。
+    :return: 一個包含校對後 Header JSON 的標準 API 響應。
+    :raises HTTPException(400): 如果 LLM 在校對過程中返回錯誤。
+    :raises HTTPException(500): 如果在處理過程中發生內部錯誤。
     """
     try:
         log_with_request_id("INFO", "開始校對 Header JSON")
@@ -1239,7 +1419,11 @@ async def review_header_json(request: HeaderJsonReviewRequest):
 @app.post("/api/review-synthetic-data", response_model=APIResponse)
 async def review_synthetic_data(request: SyntheticDataReviewRequest):
     """
-    根據使用者輸入，校對已生成的合成資料。
+    根據使用者輸入，校對已生成的合成資料的 API 端點 (`/api/review-synthetic-data`)。
+    :param request: 包含原始 `synthetic_data_markdown` 和使用者 `user_input` 的請求主體。
+    :return: 一個包含校對後合成資料 (Markdown 和 CSV 格式) 的標準 API 響應。
+    :raises HTTPException(400): 如果 LLM 在校對過程中返回錯誤。
+    :raises HTTPException(500): 如果在處理過程中發生內部錯誤。
     """
     try:
         log_with_request_id("INFO", "開始校對合成資料")
@@ -1278,7 +1462,18 @@ async def review_synthetic_data(request: SyntheticDataReviewRequest):
 # 生成合成資料
 async def run_synthetic_data_generation(task_id: str, body_markdown: str, header_json_markdown: str,
                                           full_doc_text: str,  filename: str, num_rows: int):
-    """在背景執行的 LLM 生成任務"""
+    """
+    在背景執行的合成資料生成任務。
+
+    這不是一個直接的 API 端點，而是由 `start_generation_task` 啟動的背景工作函式。
+    它會呼叫 SynDataGenService 來執行耗時的 LLM 生成操作，並在完成後更新全域 `tasks` 字典的狀態。
+    :param task_id: 此任務的唯一 ID。
+    :param body_markdown: Body 規格的 Markdown 表格。
+    :param header_json_markdown: Header 規格的 JSON 範例。
+    :param full_doc_text: 完整的原始文件內容，用於提供更多上下文。
+    :param filename: 原始檔案名稱，用於日誌和上下文。
+    :param num_rows: 要生成的資料筆數。
+    """
     try:
         spec_service = get_spec_analysis_service()
         log_with_request_id("INFO", f"背景任務 {task_id} 開始生成 {num_rows} 筆資料...")
@@ -1320,7 +1515,14 @@ async def run_synthetic_data_generation(task_id: str, body_markdown: str, header
 @app.post("/api/start-synthetic-data-task", response_model=APIResponse)
 async def start_generation_task(request_data: TaskStartRequest, background_tasks: BackgroundTasks):
     """
-    接收請求，立即返回 task_id，並在背景啟動耗時的生成任務。
+    啟動一個背景任務來生成合成資料的 API 端點 (`/api/start-synthetic-data-task`)。
+
+    此端點會立即回傳一個 `task_id` 給前端，然後使用 FastAPI 的 `BackgroundTasks`
+    在背景執行耗時的 `run_synthetic_data_generation` 函式，避免請求超時。
+    :param request_data: 包含所有生成所需參數的請求主體。
+    :param background_tasks: FastAPI 提供的背景任務管理器。
+    :return: 一個包含 `task_id` 的標準 API 響應。
+    :raises HTTPException(500): 如果在啟動任務時發生錯誤。
     """
     try:
         # 從請求中讀取所有必要的資料
@@ -1364,7 +1566,11 @@ async def start_generation_task(request_data: TaskStartRequest, background_tasks
 @app.get("/api/get-task-status/{task_id}")
 async def get_task_status(task_id: str):
     """
-    根據 task_id 查詢任務的當前狀態。
+    查詢背景任務狀態的 API 端點 (`/api/get-task-status/{task_id}`)。
+
+    前端可以使用此端點，透過 `task_id` 定期輪詢任務的進度 (processing, complete, error)。
+    :param task_id: 要查詢的任務 ID。
+    :return: 一個包含任務狀態和結果 (如果已完成) 的字典。
     """
     task = tasks.get(task_id)
     if not task:
@@ -1373,12 +1579,20 @@ async def get_task_status(task_id: str):
     return task
 
 @app.post("/api/es/upload")
-async def es_upload_files(
-    files: List[UploadFile] = File(...),
+async def es_upload_files(files: List[UploadFile] = File(...),
     index_name: str = Form(default="cathay_project1_chunks"),
     deleteExisting: str = Form(default="false")
 ):
-    """上傳多個檔案至 Elasticsearch"""
+    """
+    上傳多個檔案至 Elasticsearch 並進行索引的 API 端點 (`/api/es/upload`)。
+
+    此端點會接收檔案，將其分割成塊 (chunks)，生成向量嵌入，然後存入指定的 Elasticsearch 索引。
+    :param files: 一個從表單中獲取的 UploadFile 物件列表。
+    :param index_name: 目標 Elasticsearch 索引的名稱。
+    :param deleteExisting: 是否在上传前刪除已存在的同名索引。
+    :return: 一個包含操作結果的標準 API 響應。
+    :raises HTTPException(500): 如果在處理過程中發生錯誤。
+    """
     uploader = get_elasticsearch_service()
     delete_existing = deleteExisting.lower() in ('true', '1', 'yes')
     temp_files = []
@@ -1405,12 +1619,19 @@ async def es_upload_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/es/search")
-async def es_search_documents(
-    query: str = Form(...),
+async def es_search_documents( query: str = Form(...),
     index_name: str = Form(default="cathay_project1_chunks"),
     k: int = Form(default=5)
 ):
-    """在 Elasticsearch 中進行向量搜尋"""
+    """
+    在 Elasticsearch 中執行向量相似度搜尋的 API 端點 (`/api/es/search`)。
+    :param query: 使用者的自然語言查詢。
+    :param index_name: 要搜尋的目標索引名稱。
+    :param k: 要返回的最相似結果數量。
+    :return: 一個包含搜尋結果列表的標準 API 響應。
+    :raises HTTPException(500): 如果在搜尋過程中發生錯誤。
+    """
+
     uploader = get_elasticsearch_service()
     try:
         results = uploader.search_with_score(query, index_name, k)
@@ -1426,7 +1647,16 @@ async def es_search_documents(
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(chat_message: ChatMessage):
     """
-    處理聊天訊息，將其發送到 Langflow 並返回回應。
+    處理聊天機器人訊息的 API 端點 (`/api/chat`)。
+
+    此端點作為聊天前端和 Langflow 後端之間的橋樑。它負責：
+    1. 管理使用者會話 (session)。
+    2. 將使用者的訊息轉發給 Langflow 服務。
+    3. 接收 Langflow 的回應並返回給前端。
+    4. 記錄對話歷史。
+    :param chat_message: 包含 `message` 和可選 `session_id` 的請求主體。
+    :return: 一個包含機器人回應和 `session_id` 的標準 API 響應。
+    :raises HTTPException(500): 如果在處理過程中發生內部錯誤。
     """
     try:
         # 獲取或創建 session

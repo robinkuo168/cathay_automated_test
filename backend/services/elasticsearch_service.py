@@ -22,6 +22,19 @@ load_dotenv()
 
 class ElasticsearchService:
     def __init__(self, embedding_model: str = "ibm/slate-30m-english-rtrvr-v2"):
+        """
+        初始化 ElasticsearchService。
+
+        此建構函式負責設定所有與 Elasticsearch 互動所需的元件，包括：
+        1. 從環境變數讀取連線設定 (主機、帳號、密碼)。
+        2. 解析憑證檔案的絕對路徑並進行驗證。
+        3. 初始化 Elasticsearch 的 Python 客戶端。
+        4. 初始化用於生成向量嵌入的 WatsonxEmbeddings 模型。
+        5. 初始化用於分割不同檔案類型 (JSON, TXT) 的文本分割器。
+        :param embedding_model: 用於生成向量嵌入的 Watsonx.ai 模型 ID。
+        :raises ValueError: 如果 Elasticsearch 的環境變數未完整設定。
+        :raises FileNotFoundError: 如果在指定的路徑找不到憑證檔案。
+        """
         self.logger = get_logger(__name__)
 
         # 從環境變數讀取 Elasticsearch 設定
@@ -89,7 +102,12 @@ class ElasticsearchService:
         self.vector_stores = {}
 
     def test_connection(self) -> bool:
-        """Test Elasticsearch connection"""
+        """
+        測試與 Elasticsearch 服務的連線是否正常。
+
+        :return: 如果連線成功，返回 True。
+        :raises Exception: 如果連線失敗，則會拋出底層的連線錯誤。
+        """
         try:
             info = self.client.info()
             self.logger.info(f"Connected to Elasticsearch: {info['version']['number']}")
@@ -99,7 +117,14 @@ class ElasticsearchService:
             raise e
 
     def get_vector_store(self, index_name: str) -> ElasticsearchStore:
-        """Get or create ElasticsearchStore instance for given index"""
+        """
+        獲取或創建一個與特定索引對應的 ElasticsearchStore 實例。
+
+        此函式使用內部快取 (`self.vector_stores`) 來避免重複創建相同的
+        ElasticsearchStore 物件，從而提高效率。
+        :param index_name: 目標 Elasticsearch 索引的名稱。
+        :return: 一個可用於向量操作的 ElasticsearchStore 實例。
+        """
         if index_name not in self.vector_stores:
             self.vector_stores[index_name] = ElasticsearchStore(
                 index_name=index_name,
@@ -109,7 +134,12 @@ class ElasticsearchService:
         return self.vector_stores[index_name]
 
     def delete_all_documents(self, index_name: str) -> bool:
-        """Delete all documents from index"""
+        """
+        刪除指定索引中的所有文件。
+
+        :param index_name: 要清空的目標索引名稱。
+        :return: 如果操作成功，返回 True，否則返回 False。
+        """
         try:
             response = self.client.delete_by_query(
                 index=index_name,
@@ -122,7 +152,15 @@ class ElasticsearchService:
             return False
 
     def process_xlsx_file(self, file_path: str) -> List[Document]:
-        """Process Excel file and return LangChain Documents"""
+        """
+        處理 Excel (.xlsx) 檔案，並將其內容轉換為 LangChain 的 Document 物件列表。
+
+        此函式會遍歷 Excel 中的每一個工作表 (sheet)，將每一行轉換為一個獨立的 Document，
+        同時也會為整個工作表創建一個包含所有內容的 Document，以支援不同粒度的檢索。
+        :param file_path: Excel 檔案的路徑。
+        :return: 一個包含從檔案中提取出的所有 Document 的列表。
+        :raises Exception: 如果在讀取或處理 Excel 檔案時發生錯誤。
+        """
         documents = []
         try:
             excel_file = pd.ExcelFile(file_path)
@@ -165,7 +203,13 @@ class ElasticsearchService:
         return documents
 
     def process_txt_file(self, file_path: str) -> List[Document]:
-        """Process text file and return LangChain Documents"""
+        """
+        處理純文字 (.txt) 檔案，將其分割成塊 (chunks)，並轉換為 Document 物件列表。
+
+        :param file_path: 純文字檔案的路徑。
+        :return: 一個包含從檔案中提取並分割的所有 Document 的列表。
+        :raises Exception: 如果在讀取或處理檔案時發生錯誤。
+        """
         documents = []
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
@@ -188,7 +232,13 @@ class ElasticsearchService:
         return documents
 
     def process_yaml_file(self, file_path: str) -> List[Document]:
-        """Process YAML file and return LangChain Documents"""
+        """
+        處理 YAML (.yaml) 檔案，將其內容分割成塊，並轉換為 Document 物件列表。
+
+        :param file_path: YAML 檔案的路徑。
+        :return: 一個包含從檔案中提取並分割的所有 Document 的列表。
+        :raises Exception: 如果在讀取或處理檔案時發生錯誤。
+        """
         documents = []
         try:
             with open(file_path, 'rb') as file:
@@ -221,7 +271,15 @@ class ElasticsearchService:
         return documents
 
     def process_file(self, file_path: str) -> List[Document]:
-        """Process a single file based on its extension"""
+        """
+        根據檔案的副檔名，動態地選擇合適的處理函式來處理單一檔案。
+
+        這是一個調度函式 (dispatcher)，它會根據副檔名呼叫對應的
+        `process_xlsx_file`, `process_txt_file` 或 `process_yaml_file`。
+        :param file_path: 要處理的檔案路徑。
+        :return: 一個從檔案中提取出的 Document 物件列表。
+        :raises ValueError: 如果檔案類型不被支援。
+        """
         file_path = Path(file_path)
         extension = file_path.suffix.lower()
         if extension in ['.xlsx', '.xls']:
@@ -234,7 +292,15 @@ class ElasticsearchService:
             raise ValueError(f"Unsupported file type: {extension}")
 
     def check_document_exists(self, document: Document, index_name: str) -> bool:
-        """Check if document already exists in the index"""
+        """
+        檢查一個特定的 Document 物件是否已經存在於指定的索引中，以避免重複上傳。
+
+        它通過對文件內容和元數據進行雜湊 (hash) 來生成一個唯一的標識符，
+        並在 Elasticsearch 中查詢該標識符。
+        :param document: 要檢查的 LangChain Document 物件。
+        :param index_name: 目標 Elasticsearch 索引的名稱。
+        :return: 如果文件已存在，返回 True，否則返回 False。
+        """
         try:
             content_hash = hashlib.md5(
                 (document.page_content + str(document.metadata.get("file_path", ""))).encode()
@@ -256,7 +322,16 @@ class ElasticsearchService:
             return False
 
     def upload_documents(self, documents: List[Document], index_name: str, check_duplicates: bool = True) -> bool:
-        """Upload documents to Elasticsearch with batch duplicate checking"""
+        """
+        將一個 Document 物件列表上傳至 Elasticsearch，並可選擇性地進行批次重複檢查。
+
+        如果啟用重複檢查，它會使用高效的 `mget` 操作一次性檢查所有文件是否已存在，
+        然後只上傳新的文件，大幅提升了重複上傳時的效率。
+        :param documents: 要上傳的 Document 物件列表。
+        :param index_name: 目標 Elasticsearch 索引的名稱。
+        :param check_duplicates: 是否在上传前檢查重複。
+        :return: 如果操作成功，返回 True，否則返回 False。
+        """
         try:
             vector_store = self.get_vector_store(index_name)
             if check_duplicates:
@@ -299,7 +374,15 @@ class ElasticsearchService:
             return False
 
     def upload_file(self, file_path: str, index_name: str, check_duplicates: bool = True) -> bool:
-        """Upload a single file to Elasticsearch"""
+        """
+        一個方便的包裝函式，用於處理並上傳單一檔案。
+
+        它會先呼叫 `process_file` 將檔案轉換為 Document 列表，然後再呼叫 `upload_documents` 進行上傳。
+        :param file_path: 要上傳的檔案路徑。
+        :param index_name: 目標 Elasticsearch 索引的名稱。
+        :param check_duplicates: 是否在上传前檢查重複。
+        :return: 如果操作成功，返回 True，否則返回 False。
+        """
         try:
             self.logger.info(f"📄 Processing file: {file_path}")
             documents = self.process_file(file_path)
@@ -314,7 +397,17 @@ class ElasticsearchService:
 
     def upload_multiple_files(self, file_paths: List[str], index_name: str,
                               delete_existing: bool = False, check_duplicates: bool = True) -> bool:
-        """Upload multiple files to Elasticsearch"""
+        """
+        上傳多個檔案至 Elasticsearch 的主要進入點。
+
+        此函式協調整個上傳流程，包括測試連線、可選地刪除舊索引，
+        以及迭代處理每一個檔案。
+        :param file_paths: 一個包含多個檔案路徑的列表。
+        :param index_name: 目標 Elasticsearch 索引的名稱。
+        :param delete_existing: 是否在上传前刪除已存在的同名索引。
+        :param check_duplicates: 是否在上传每個檔案時檢查重複。
+        :return: 如果所有檔案都成功處理，返回 True，否則返回 False。
+        """
         try:
             if not self.test_connection():
                 return False
@@ -340,7 +433,14 @@ class ElasticsearchService:
             return False
 
     def search_documents(self, query: str, index_name: str, k: int = 5) -> List[Document]:
-        """Search documents using vector similarity"""
+        """
+        在指定的索引中，根據向量相似度執行搜尋。
+
+        :param query: 使用者的自然語言查詢。
+        :param index_name: 要搜尋的目標索引名稱。
+        :param k: 要返回的最相似結果數量。
+        :return: 一個包含最相似的 Document 物件的列表。
+        """
         try:
             vector_store = self.get_vector_store(index_name)
             return vector_store.similarity_search(query, k=k)
@@ -349,7 +449,14 @@ class ElasticsearchService:
             return []
 
     def search_with_score(self, query: str, index_name: str, k: int = 5) -> List[tuple]:
-        """Search documents with similarity scores"""
+        """
+        執行向量相似度搜尋，並在結果中包含每個文件的相似度分數。
+
+        :param query: 使用者的自然語言查詢。
+        :param index_name: 要搜尋的目標索引名稱。
+        :param k: 要返回的最相似結果數量。
+        :return: 一個元組的列表，每個元組包含 (Document, score)。
+        """
         try:
             vector_store = self.get_vector_store(index_name)
             return vector_store.similarity_search_with_score(query, k=k)
@@ -358,7 +465,14 @@ class ElasticsearchService:
             return []
 
     async def get_agent_json(self, index_name: str = "my_agent_versions") -> Dict:
-        """從指定的索引中檢索最新的 JSON 文件。"""
+        """
+        從指定的索引中檢索最新的 JSON 文件 (通常用於獲取 Agent 設定)。
+
+        :param index_name: 存儲 Agent 設定的索引名稱。
+        :return: 一個包含 Agent 設定的字典。
+        :raises ConnectionError: 如果無法連接到 Elasticsearch。
+        :raises FileNotFoundError: 如果在指定的索引中找不到任何文件。
+        """
         if not self.client.ping():
             raise ConnectionError("無法連接到 Elasticsearch。")
 
@@ -384,7 +498,14 @@ class ElasticsearchService:
             raise
 
     async def get_agent_json_bytes(self, index_name: str = "my_agent_versions") -> bytes:
-        """檢索 Agent JSON 並將其轉換為位元組。"""
+        """
+        檢索 Agent 的 JSON 設定，並將其轉換為位元組 (bytes) 格式。
+
+        這是一個方便的函式，用於需要將 JSON 內容作為位元組流處理的場景。
+        :param index_name: 存儲 Agent 設定的索引名稱。
+        :return: 一個包含 UTF-8 編碼的 JSON 內容的位元組字串。
+        :raises Exception: 如果在檢索或轉換過程中發生錯誤。
+        """
         try:
             agent_data = await self.get_agent_json(index_name)
             json_string = json.dumps(agent_data, indent=2, ensure_ascii=False)

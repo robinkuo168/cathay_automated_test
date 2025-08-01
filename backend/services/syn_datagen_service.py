@@ -21,9 +21,12 @@ load_dotenv()
 class SynDataGenService:
     def __init__(self, llm_service: Optional[LLMService] = None, model_name: str = "default"):
         """
-        初始化 SynDataGenService
-        :param llm_service: 可選的 LLMService 實例，如果為 None 則會自動創建
-        :param model_name: 要使用的模型名稱，預設為 "default"
+        初始化 SynDataGenService (合成資料生成服務)。
+
+        此建構函式會設定服務所需的依賴項，例如日誌記錄器、LLM 服務 (延遲載入)、
+        最大生成筆數限制，以及在 LLM 無法從文件中提取加密參數時所使用的備援金鑰 (fallback key)。
+        :param llm_service: (可選) 一個 LLMService 實例。
+        :param model_name: 要使用的底層 LLM 服務名稱。
         """
         self.logger = get_logger(__name__)
         self._llm_service = llm_service
@@ -53,6 +56,13 @@ class SynDataGenService:
 
     @property
     def llm_service(self) -> LLMService:
+        """
+        一個延遲載入 (lazy-loading) 的屬性，用於獲取 LLMService 實例。
+
+        它確保 LLMService 只在第一次被需要時才進行初始化，
+        避免了不必要的資源消耗和啟動延遲。
+        :return: 一個 LLMService 的實例。
+        """
         if self._llm_service is None:
             self.logger.info(f"初始化 LLMService (Model: {self._model_name})")
             try:
@@ -65,10 +75,14 @@ class SynDataGenService:
 
     def _extract_first_json_object(self, text: str) -> Optional[str]:
         """
-        從可能包含額外文本的字串中穩健地提取第一個完整的 JSON 物件或陣列。
-        此函式特別設計用來處理 LLM 可能返回的不完美輸出，
-        例如在 JSON 後面還有結束語，或括號不匹配的情況。
+        一個健壯的工具函式，用於從可能包含額外文本的字串中，提取第一個完整的 JSON 物件或陣列。
+
+        此函式特別設計用來處理 LLM 可能返回的不完美輸出，例如在 JSON 後面還有結束語，
+        或括號不匹配的情況。
+        :param text: 來自 LLM 的原始回應字串。
+        :return: 一個包含 JSON 物件或陣列的字串，如果找不到則返回 None。
         """
+
         try:
             match = re.search(r'\{.*\}|\[.*\]', text, re.DOTALL)
             if not match:
@@ -95,21 +109,15 @@ class SynDataGenService:
 
     async def generate_header_json_from_doc(self, text: str, filename: str = "unknown") -> Optional[Union[Dict, List[Dict]]]:
         """
-        從文件中穩健地提取所有 "上行／請求電文範例" 的 JSON 物件。
+        從文件中穩健地提取所有「上行／請求電文範例」的 JSON 物件。
 
         此函式能自動處理單一或多個 JSON 範例的情況：
         - 如果找到多個範例，它會將它們以一個 JSON 陣列 (list of dicts) 的形式返回。
         - 如果只找到一個範例，它會直接返回該 JSON 物件 (dict)。
         - 如果找不到任何有效範例，則返回一個空列表 `[]`。
-        - 如果在過程中發生解析錯誤，則返回 None。
-
-        Args:
-            text: 包含 API 規格的文件內容。
-            filename: 正在處理的文件名稱，用於日誌記錄。
-
-        Returns:
-            一個單一的 JSON 物件 (dict)、一個 JSON 物件列表 (list[dict])、
-            一個空列表 `[]`，如果失敗則返回 None。
+        :param text: 包含 API 規格的文件內容。
+        :param filename: 正在處理的文件名稱，用於日誌記錄。
+        :return: 一個單一的 JSON 物件 (dict)、一個 JSON 物件列表 (list[dict])、一個空列表 `[]`，如果失敗則返回 None。
         """
         self.logger.info(f"開始為檔案 '{filename}' 提取所有請求 JSON 範例 (Model: {self._model_name})...")
 
@@ -188,6 +196,13 @@ class SynDataGenService:
             return None
 
     async def generate_body_markdown_from_doc(self, text: str, filename: str = "unknown") -> Optional[str]:
+        """
+        使用 LLM 從文件內容中，尋找並轉換「上行／請求電文規格」表格為 Markdown 格式。
+
+        :param text: 包含 API 規格的文件內容。
+        :param filename: 正在處理的文件名稱，用於日誌記錄。
+        :return: 一個包含 Markdown 表格的字串，如果失敗則返回 None。
+        """
         self.logger.info(f"開始為檔案 {filename} 生成 Body Markdown (LLM-First)...")
         try:
             prompt = textwrap.dedent(f"""
@@ -224,6 +239,14 @@ class SynDataGenService:
             return None
 
     async def review_markdown_with_llm(self, markdown: str, user_input: str, filename: str = "unknown") -> Dict:
+        """
+        根據使用者輸入，使用 LLM 校對和修改 Body 規格的 Markdown 表格。
+
+        :param markdown: 當前的 Markdown 表格字串。
+        :param user_input: 使用者的修改指令。
+        :param filename: 正在處理的文件名稱，用於日誌記錄。
+        :return: 一個包含校對後 Markdown 和確認狀態的字典。
+        """
         self.logger.info(f"開始為檔案 {filename} 校對 Markdown 表格")
         try:
             prompt = textwrap.dedent(f"""
@@ -264,17 +287,15 @@ class SynDataGenService:
             self.logger.error(f"為檔案 {filename} 校對 Markdown 表格失敗: {str(e)}", exc_info=True)
             return {"filename": filename, "type": "markdown_review", "error": str(e), "data": None, "content": ""}
 
-    async def review_header_json_with_llm(self, header_markdown: str, user_input: str, filename: str = "unknown") -> Dict:
+    async def review_header_json_with_llm(self, header_markdown: str, user_input: str,
+                                          filename: str = "unknown") -> Dict:
         """
-        使用 LLM 根據使用者輸入來校對和修改包含 Header JSON 的 Markdown 字串。
+        根據使用者輸入，使用 LLM 校對和修改包含 Header JSON 範例的 Markdown 字串。
 
-        Args:
-            header_markdown: 當前包含一或多個請求 JSON 範例的 Markdown 字串。
-            user_input: 使用者的修改指令 (例如 "請將所有範例中的 'version' 欄位值改為 '2.0'")。
-            filename: 正在處理的文件名稱，用於日誌記錄。
-
-        Returns:
-            一個包含標準化結果的字典。
+        :param header_markdown: 當前包含一或多個請求 JSON 範例的 Markdown 字串。
+        :param user_input: 使用者的修改指令 (例如 "請將所有範例中的 'version' 欄位值改為 '2.0'")。
+        :param filename: 正在處理的文件名稱，用於日誌記錄。
+        :return: 一個包含校對後 Markdown 和確認狀態的字典。
         """
         self.logger.info(f"開始為檔案 '{filename}' 校對 Header JSON...")
         try:
@@ -334,9 +355,17 @@ class SynDataGenService:
                 "content": ""
             }
 
-    async def review_synthetic_data_with_llm(self, synthetic_markdown: str, user_input: str, filename: str = "synthetic_review") -> Dict:
+    async def review_synthetic_data_with_llm(self, synthetic_markdown: str, user_input: str,
+                                             filename: str = "synthetic_review") -> Dict:
         """
-        使用 LLM 根據使用者輸入來校對和修改合成資料 Markdown 表格。
+        根據使用者輸入，使用 LLM 校對和修改已生成的合成資料 Markdown 表格。
+
+        此函式在 LLM 更新完 Markdown 表格後，會自動呼叫內部工具函式，
+        將更新後的 Markdown 重新轉換為對應的 CSV 格式內容。
+        :param synthetic_markdown: 當前的合成資料 Markdown 表格。
+        :param user_input: 使用者的修改指令。
+        :param filename: 正在處理的文件名稱，用於日誌記錄。
+        :return: 一個包含校對後 Markdown 和 CSV 內容的字典。
         """
         self.logger.info(f"開始為檔案 '{filename}' 校對合成資料...")
         try:
@@ -396,8 +425,21 @@ class SynDataGenService:
     async def generate_data_from_markdown(self, body_markdown: str, header_json_markdown: str, full_doc_text: str,
                                           context_id: str, num_records: int) -> dict:
         """
-        【V3 版 - 支援多範例】從規格書生成合成資料。
-        此版本能處理多個請求範例，並將生成任務分配給它們，以產生更多樣化的資料。
+        合成資料生成的總指揮，支援多個請求範例。
+
+        此函式協調整個生成流程，能處理多個請求範例，並將生成任務分配給它們，以產生更多樣化的資料。
+        核心步驟包括：
+        1. 提取加密參數。
+        2. 解析所有 Header JSON 範例。
+        3. 迭代所有範例，為每個範例呼叫 LLM 生成一批資料。
+        4. 對需要加密的欄位進行後處理。
+        5. 將所有生成的資料打包成統一的 Markdown 和 CSV 格式。
+        :param body_markdown: Body 規格的 Markdown 表格。
+        :param header_json_markdown: 包含一或多個 Header JSON 範例的字串。
+        :param full_doc_text: 完整的原始文件內容，用於提取加密參數等上下文。
+        :param context_id: 用於日誌記錄的上下文 ID (通常是檔名)。
+        :param num_records: 要生成的總資料筆數。
+        :return: 一個包含操作結果 (`success`, `data` 或 `error`) 的字典。
         """
         self.logger.info(f"開始為上下文 '{context_id}' 生成 {num_records} 筆合成資料 (多範例模式)...")
         try:
@@ -509,10 +551,19 @@ class SynDataGenService:
             self.logger.error(f"為上下文 '{context_id}' 生成合成資料失敗: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
-    async def _batch_generate_creative_data_with_llm( self, body_markdown: str, body_example_json: str, num_records: int,
-            encrypted_fields: List[str] = None) -> List[Dict]:
+    async def _batch_generate_creative_data_with_llm(self, body_markdown: str, body_example_json: str, num_records: int,
+                                                     encrypted_fields: List[str] = None) -> List[Dict]:
         """
-        【混合模型版】讓 LLM 直接生成資料，但能特別處理加密欄位。
+        一個內部輔助函式，呼叫 LLM 來批次生成具有創造性的合成資料。
+
+        此函式採用「混合模型」策略：它指導 LLM 生成所有欄位的真實感資料，
+        但對於需要加密的欄位，它會要求 LLM 生成「未加密的原始資料」並用特殊格式標記，
+        將實際的加密操作留給後續步驟處理。
+        :param body_markdown: Body 規格的 Markdown 表格，作為 LLM 的規則參考。
+        :param body_example_json: 單一請求 Body 的 JSON 範例，作為 LLM 的結構參考。
+        :param num_records: 要生成的資料筆數。
+        :param encrypted_fields: 需要進行特殊處理的加密欄位列表。
+        :return: 一個包含多筆生成資料的字典列表。
         """
         self.logger.info(f"正在請求 LLM (混合模型) 生成 {num_records} 筆資料...")
 
@@ -576,6 +627,12 @@ class SynDataGenService:
             raise
 
     def _convert_markdown_to_csv(self, markdown_text: str) -> str:
+        """
+        一個工具函式，用於將 Markdown 表格字串轉換為 CSV 格式的字串。
+
+        :param markdown_text: 包含 Markdown 表格的字串。
+        :return: 一個 CSV 格式的字串。
+        """
         if not markdown_text: return ""
         lines = markdown_text.strip().split('\n')
         lines = [line for line in lines if not re.match(r'^\s*\|?[-|:\s]+$', line)]
@@ -590,7 +647,11 @@ class SynDataGenService:
 
     async def _extract_encryption_params_with_llm(self, full_doc_text: str) -> Optional[Dict]:
         """
-        【V3 版】使用更具適應性的 Prompt，應對文件編號不一致和關鍵字多樣性。
+        一個內部輔助函式，使用 LLM 從文件全文中提取 3DES 加密的金鑰 (Key) 和初始向量 (IV)。
+
+        此函式使用的提示詞經過優化，能適應文件中章節編號不一致和關鍵字多樣性的情況。
+        :param full_doc_text: 文件的完整文字內容。
+        :return: 一個包含 'key' 和 'iv' 的字典，如果找不到則返回 None。
         """
         self.logger.info("正在請求 LLM (適應性) 提取加密參數 (Key/IV)...")
 
@@ -662,7 +723,15 @@ class SynDataGenService:
             return None
 
     def _flatten_dict(self, d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
-        """將巢狀字典拍平。"""
+        """
+        一個遞迴的工具函式，用於將巢狀的字典「拍平」成單層字典。
+
+        例如：`{'a': {'b': 1}}` 會被轉換為 `{'a.b': 1}`。
+        :param d: 要拍平的字典。
+        :param parent_key: (內部遞迴使用) 父層的鍵。
+        :param sep: 用於連接鍵的分隔符。
+        :return: 一個拍平後的字典。
+        """
         items = []
         for k, v in d.items():
             new_key = parent_key + sep + k if parent_key else k
@@ -674,10 +743,10 @@ class SynDataGenService:
 
     def _extract_request_body_from_example(self, request_example_dict: Dict) -> tuple[Optional[str], Optional[Dict]]:
         """
-        【V10 新增】從完整的請求範例中，智慧地提取出 Body 的鍵名和物件。
-        優先尋找 'TRANRQ', 'TRANBODY', 'SvcRq' 等常見 Body 鍵名。
-        如果找不到，則假設除了 'MWHEADER' 之外的另一個頂層鍵就是 Body。
+        一個內部輔助函式，用於從完整的請求範例中，智慧地提取出 Body 的鍵名和物件。
 
+        它會優先尋找 'TRANRQ', 'TRANBODY', 'SvcRq' 等常見的 Body 鍵名。
+        如果找不到，則假設除了 'MWHEADER' 之外的另一個頂層鍵就是 Body。
         :param request_example_dict: 已解析的請求 JSON 字典。
         :return: 一個包含 (body_key, body_object) 的元組，例如 ('TRANRQ', {...})。如果找不到則返回 (None, None)。
         """
@@ -706,7 +775,9 @@ class SynDataGenService:
 
     def _find_encrypted_fields(self, body_markdown: str) -> List[str]:
         """
-        掃描 Markdown 表格，找出哪些欄位需要加密。
+        一個內部輔助函式，用於掃描 Markdown 表格，找出哪些欄位需要加密。
+
+        它通過在欄位描述中尋找 "加密"、"encrypt" 等關鍵字來識別目標欄位。
         :param body_markdown: 包含欄位規則的 Markdown 表格。
         :return: 一個包含需要加密的欄位名稱的列表。
         """
@@ -732,10 +803,10 @@ class SynDataGenService:
 
     def _process_encryption_placeholders(self, record: dict, params: dict) -> dict:
         """
-        【V2 版】處理由 LLM 生成的加密佔位符物件。
+        一個內部輔助函式，用於處理由 LLM 生成的加密佔位符物件。
+
         它會遍歷記錄，找到格式為 `{"_unencrypted_source_": "..."}` 的值，
         提取原始資料進行加密，然後用加密後的字串替換掉原始的物件。
-
         :param record: 一筆包含待處理資料的字典。
         :param params: 包含 'key' 和 'iv' 的加密參數字典。
         :return: 一個處理完加密欄位的完整字典。
@@ -780,8 +851,12 @@ class SynDataGenService:
 
     def _convert_flattened_data_to_markdown(self, flattened_data: List[Dict]) -> str:
         """
-        【V2 版 - 支援異構資料】將拍平後的資料列表轉換為 Markdown 表格字串。
-        此版本能處理列表中包含不同鍵集合的字典，會自動建立所有鍵的聯集作為表頭。
+        一個工具函式，將拍平後的資料列表轉換為 Markdown 表格字串。
+
+        此版本能處理列表中包含不同鍵集合的異構資料 (heterogeneous data)，
+        它會自動收集所有記錄中出現過的唯一鍵，並將它們的聯集作為統一的表頭。
+        :param flattened_data: 一個拍平後的字典列表。
+        :return: 一個 Markdown 表格字串。
         """
         if not flattened_data:
             self.logger.warning("嘗試將空的資料列表轉換為 Markdown，返回空字串。")
@@ -814,8 +889,9 @@ class SynDataGenService:
 
     def _validate_encryption_params(self, params: Optional[Dict]) -> bool:
         """
-        驗證從文件中提取的加密參數是否有效。
+        一個內部輔-助函式，用於驗證從文件中提取的加密參數是否有效。
 
+        它主要檢查 3DES 所需的 Key 和 IV 是否符合正確的位元組長度。
         :param params: 一個可能包含 'key' 和 'iv' 的字典。
         :return: 如果參數有效則返回 True，否則返回 False。
         """
@@ -841,8 +917,13 @@ class SynDataGenService:
 
     def _tool_encrypt_data(self, data: str, key: str, iv: str) -> str:
         """
-        使用 3DES CBC Mode 和 Hex 編碼來加密資料。
-        此函式直接處理加密邏輯，取代了原有的 _tool_encrypt_data 抽象層。
+        一個工具函式，使用 3DES CBC Mode 和 Hex 編碼來加密資料。
+
+        :param data: 要加密的原始字串。
+        :param key: 3DES 金鑰 (16 或 24 bytes)。
+        :param iv: 3DES 初始向量 (8 bytes)。
+        :return: 加密並進行 Hex 編碼後的字串。
+        :raises ValueError: 如果 Key 或 IV 的長度無效。
         """
         self.logger.debug(f"執行 3DES 加密，Key: '{key[:4]}...', IV: '{iv}'")
 
