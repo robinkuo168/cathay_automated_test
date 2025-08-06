@@ -10,7 +10,7 @@
     <div class="upload-container">
         <div class="header">
             <h1>🔍 檔案上傳工具</h1>
-            <p>將 TXT, XLSX, 和 YAML 檔案直接上傳至向量資料庫</p>
+            <p id="headerDescription">將 TXT, XLSX, 和 YAML 檔案直接上傳至向量資料庫</p>
         </div>
 
         <div class="info-box">
@@ -18,21 +18,30 @@
             <p>已連接至國泰專案雲端向量資料庫</p>
         </div>
 
-        <!-- Simplified Configuration -->
-        <div class="simple-config" >
+        <!-- Enhanced Configuration -->
+        <div class="simple-config">
+            <!-- Index Type Selection -->
+            <div class="form-group">
+                <label for="indexType">📋 上傳類型</label>
+                <select id="indexType">
+                    <option value="documents">📄 一般文件 (TXT, XLSX, YAML)</option>
+                    <option value="agent">🤖 Agent 版本 (JSON)</option>
+                </select>
+            </div>
+
+            <!-- Data Processing Method -->
+            <div class="form-group">
+                <label for="deleteExisting">🔄 資料處理方式</label>
+                <select id="deleteExisting">
+                    <option value="false">新增至現有資料</option>
+                    <option value="true">先清除所有現有資料</option>
+                </select>
+            </div>
+
+            <!-- Hidden Index Name Input -->
             <div class="form-group" style="display: none;">
                 <label for="indexName">索引名稱</label>
                 <input type="text" id="indexName" value="cathay_project1_chunks" placeholder="cathay_project1_chunks">
-            </div>
-
-            <div class="form-group">
-                <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
-                    <label for="deleteExisting" style="margin-bottom: 0; flex-shrink: 0;">資料處理方式</label>
-                    <select id="deleteExisting">
-                        <option value="false">新增至現有資料</option>
-                        <option value="true">先清除所有現有資料</option>
-                    </select>
-                </div>
             </div>
         </div>
 
@@ -42,7 +51,7 @@
             <div class="drop-zone-content">
                 <div class="upload-icon">📁</div>
                 <h3>將檔案拖曳至此或點擊選取</h3>
-                <p>支援格式: TXT, XLSX, YAML</p>
+                <p id="supportedFormats">支援格式: TXT, XLSX, YAML</p>
             </div>
         </div>
 

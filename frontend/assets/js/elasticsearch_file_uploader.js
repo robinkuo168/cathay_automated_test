@@ -1,6 +1,23 @@
 let selectedFiles = [];
-//const API_BASE = 'http://localhost:8000/api/es';
 const API_BASE = '/api/es'; // Set API base for Elasticsearch endpoints
+
+// Index configurations
+const INDEX_CONFIGS = {
+    documents: {
+        indexName: 'cathay_project1_chunks',
+        allowedTypes: ['.txt', '.xlsx', '.xls', '.yaml', '.yml'],
+        displayTypes: 'TXT, XLSX, YAML',
+        description: '將 TXT, XLSX, 和 YAML 檔案直接上傳至向量資料庫',
+        buttonText: '上傳至向量資料庫'
+    },
+    agent: {
+        indexName: 'my_agent_versions',
+        allowedTypes: ['.json'],
+        displayTypes: 'JSON',
+        description: '將 Langflow Agent 版本 JSON 檔案上傳至資料庫',
+        buttonText: '上傳 Agent 版本'
+    }
+};
 
 // DOM Elements
 const elements = {
@@ -9,15 +26,24 @@ const elements = {
     fileList: document.getElementById('fileList'),
     uploadBtn: document.getElementById('uploadBtn'),
     indexNameInput: document.getElementById('indexName'),
+    indexTypeSelect: document.getElementById('indexType'),
     deleteExistingSelect: document.getElementById('deleteExisting'),
     progressBar: document.getElementById('progressBar'),
     progressFill: document.getElementById('progressFill'),
-    statusMessage: document.getElementById('statusMessage')
+    statusMessage: document.getElementById('statusMessage'),
+    headerDescription: document.getElementById('headerDescription'),
+    supportedFormats: document.getElementById('supportedFormats')
 };
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
     if (!elements.dropZone) return; // Exit if not on the right page
+
+    // Initialize with default configuration
+    updateUIForIndexType();
+
+    // Index type change handler
+    elements.indexTypeSelect.addEventListener('change', handleIndexTypeChange);
 
     // Drag and drop events
     elements.dropZone.addEventListener('dragover', (e) => {
@@ -43,8 +69,73 @@ document.addEventListener('DOMContentLoaded', function() {
     elements.uploadBtn.addEventListener('click', uploadFiles);
 });
 
+function handleIndexTypeChange() {
+    // Clear existing files when switching index types
+    selectedFiles = [];
+    updateFileList();
+    updateUploadButton();
+
+    // Update UI elements
+    updateUIForIndexType();
+
+    showStatus(`已切換至 ${getCurrentConfig().indexName} 模式`, 'info');
+}
+
+function updateUIForIndexType() {
+    const config = getCurrentConfig();
+
+    // Update hidden index name input
+    elements.indexNameInput.value = config.indexName;
+
+    // Update file input accept attribute
+    elements.fileInput.accept = config.allowedTypes.join(',');
+
+    // Update UI text
+    elements.headerDescription.textContent = config.description;
+    elements.supportedFormats.textContent = `支援格式: ${config.displayTypes}`;
+    elements.uploadBtn.textContent = config.buttonText;
+
+    // For agent type, automatically set deleteExisting to true and disable the dropdown
+    if (elements.indexTypeSelect.value === 'agent') {
+        elements.deleteExistingSelect.value = 'true';
+        elements.deleteExistingSelect.disabled = true;
+        elements.deleteExistingSelect.style.opacity = '0.6';
+        elements.deleteExistingSelect.style.cursor = 'not-allowed';
+
+        // Add a note to explain why it's disabled
+        const formGroup = elements.deleteExistingSelect.parentElement;
+        let note = formGroup.querySelector('.agent-note');
+        if (!note) {
+            note = document.createElement('small');
+            note.className = 'agent-note';
+            note.style.color = '#666';
+            note.style.fontStyle = 'italic';
+            note.style.marginTop = '5px';
+            note.textContent = '📝 Agent 版本會自動清除舊版本';
+            formGroup.appendChild(note);
+        }
+    } else {
+        // For documents type, enable the dropdown
+        elements.deleteExistingSelect.disabled = false;
+        elements.deleteExistingSelect.style.opacity = '1';
+        elements.deleteExistingSelect.style.cursor = 'pointer';
+
+        // Remove the note if it exists
+        const formGroup = elements.deleteExistingSelect.parentElement;
+        const note = formGroup.querySelector('.agent-note');
+        if (note) {
+            note.remove();
+        }
+    }
+}
+
+function getCurrentConfig() {
+    return INDEX_CONFIGS[elements.indexTypeSelect.value];
+}
+
 function handleFiles(files) {
-    const allowedTypes = ['.txt', '.xlsx', '.xls', '.yaml', '.yml'];
+    const config = getCurrentConfig();
+    const allowedTypes = config.allowedTypes;
 
     Array.from(files).forEach(file => {
         const extension = '.' + file.name.split('.').pop().toLowerCase();
@@ -54,7 +145,8 @@ function handleFiles(files) {
                 selectedFiles.push(file);
             }
         } else {
-            showStatus(`檔案 "${file.name}" 的格式不受支援。`, 'error');
+            const currentMode = elements.indexTypeSelect.value === 'documents' ? '一般文件' : 'Agent 版本';
+            showStatus(`檔案 "${file.name}" 不適用於 ${currentMode} 模式。請選擇 ${config.displayTypes} 格式的檔案。`, 'error');
         }
     });
 
@@ -124,8 +216,11 @@ function updateProgress(percent) {
 async function uploadFiles() {
     if (selectedFiles.length === 0) return;
 
-    const indexName = elements.indexNameInput.value || 'cathay_project1_chunks';
-    const deleteExisting = elements.deleteExistingSelect.value;
+    const config = getCurrentConfig();
+    const indexName = config.indexName;
+
+    // For agent type, always delete existing regardless of user selection
+    const deleteExisting = elements.indexTypeSelect.value === 'agent' ? 'true' : elements.deleteExistingSelect.value;
 
     elements.uploadBtn.disabled = true;
     elements.uploadBtn.textContent = '處理中...';
@@ -139,6 +234,7 @@ async function uploadFiles() {
         });
         formData.append('indexName', indexName);
         formData.append('deleteExisting', deleteExisting);
+        formData.append('indexType', elements.indexTypeSelect.value); // Send index type for validation
 
         const response = await fetch(`${API_BASE}/upload`, {
             method: 'POST',
@@ -152,7 +248,8 @@ async function uploadFiles() {
         }
 
         updateProgress(100);
-        showStatus(`✅ 成功處理 ${selectedFiles.length} 個檔案至索引 "${indexName}"`, 'success');
+        const indexTypeText = elements.indexTypeSelect.value === 'documents' ? '一般文件' : 'Agent 版本';
+        showStatus(`✅ 成功處理 ${selectedFiles.length} 個${indexTypeText}檔案至索引 "${indexName}"`, 'success');
 
         selectedFiles = [];
         updateFileList();
@@ -162,7 +259,7 @@ async function uploadFiles() {
         console.error('Upload error:', error);
     } finally {
         elements.uploadBtn.disabled = false;
-        elements.uploadBtn.textContent = '上傳至 Elasticsearch';
+        elements.uploadBtn.textContent = config.buttonText;
         showProgress(false);
         updateUploadButton();
     }

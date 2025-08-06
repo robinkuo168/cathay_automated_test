@@ -16,9 +16,9 @@ from langchain_ibm import WatsonxEmbeddings
 from ibm_watsonx_ai.metanames import EmbedTextParamsMetaNames
 from dotenv import load_dotenv
 from .logger import get_logger
+from fastapi import HTTPException
 
 load_dotenv()
-
 
 class ElasticsearchService:
     def __init__(self, embedding_model: str = "ibm/slate-30m-english-rtrvr-v2"):
@@ -72,7 +72,7 @@ class ElasticsearchService:
             }],
             basic_auth=(ES_USERNAME, ES_PASSWORD),
             ca_certs=str(CERT_PATH),  # 使用絕對路徑
-            verify_certs=True
+            verify_certs=False
         )
 
         # Initialize embeddings
@@ -150,6 +150,45 @@ class ElasticsearchService:
         except Exception as e:
             self.logger.error(f"Failed to delete documents from {index_name}: {e}")
             return False
+
+    def process_json_file(self, file_path: str) -> List[Document]:
+        """
+        處理 JSON (.json) 檔案，主要用於 Langflow Agent 版本文件。
+
+        對於 my_agent_versions 索引，我們將整個 JSON 作為單一文件儲存，
+        不進行分割，以保持 Agent 配置的完整性。
+        :param file_path: JSON 檔案的路徑。
+        :return: 一個包含從檔案中提取出的 Document 物件的列表。
+        :raises Exception: 如果在讀取或處理檔案時發生錯誤。
+        """
+        documents = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                json_data = json.load(file)
+
+            # For agent versions, store ONLY the complete JSON as a single document
+            # Do NOT create chunked versions to avoid multiple documents
+            full_doc = Document(
+                page_content=json.dumps(json_data, ensure_ascii=False, indent=2),
+                metadata={
+                    "file_path": str(file_path),
+                    "filetype": "This is a JSON/.json file (Agent Version)",
+                    "is_full_document": True,
+                    "source": str(file_path),
+                    "agent_version": json_data.get("version", "unknown"),
+                    "agent_name": json_data.get("name", "unknown"),
+                    "created_at": json_data.get("created_at", "unknown")
+                }
+            )
+            documents.append(full_doc)
+
+            # REMOVED: Chunked versions creation to keep only 1 document per agent
+            # This eliminates the 4 additional chunk documents
+
+        except Exception as e:
+            self.logger.error(f"Error processing JSON file {file_path}: {e}")
+            raise
+        return documents
 
     def process_xlsx_file(self, file_path: str) -> List[Document]:
         """
@@ -275,7 +314,7 @@ class ElasticsearchService:
         根據檔案的副檔名，動態地選擇合適的處理函式來處理單一檔案。
 
         這是一個調度函式 (dispatcher)，它會根據副檔名呼叫對應的
-        `process_xlsx_file`, `process_txt_file` 或 `process_yaml_file`。
+        `process_xlsx_file`, `process_txt_file`, `process_yaml_file` 或 `process_json_file`。
         :param file_path: 要處理的檔案路徑。
         :return: 一個從檔案中提取出的 Document 物件列表。
         :raises ValueError: 如果檔案類型不被支援。
@@ -288,6 +327,8 @@ class ElasticsearchService:
             return self.process_txt_file(str(file_path))
         elif extension in ['.yaml', '.yml']:
             return self.process_yaml_file(str(file_path))
+        elif extension == '.json':
+            return self.process_json_file(str(file_path))
         else:
             raise ValueError(f"Unsupported file type: {extension}")
 
@@ -465,53 +506,65 @@ class ElasticsearchService:
             return []
 
     async def get_agent_json(self, index_name: str = "my_agent_versions") -> Dict:
-        """
-        從指定的索引中檢索最新的 JSON 文件 (通常用於獲取 Agent 設定)。
-
-        :param index_name: 存儲 Agent 設定的索引名稱。
-        :return: 一個包含 Agent 設定的字典。
-        :raises ConnectionError: 如果無法連接到 Elasticsearch。
-        :raises FileNotFoundError: 如果在指定的索引中找不到任何文件。
-        """
-        if not self.client.ping():
-            raise ConnectionError("無法連接到 Elasticsearch。")
-
-        self.logger.info(f"正在從索引 '{index_name}' 檢索 Agent JSON...")
+        """Retrieve the ORIGINAL JSON file from my_agent_versions index"""
         try:
+
+            self.logger.info(f"🔍 Searching for documents in index: {index_name}")
+
             response = self.client.search(
                 index=index_name,
-                body={
-                    "query": {"match_all": {}},
-                    "size": 1,
-                }
+                body={"query": {"match_all": {}}, "size": 1}
             )
-            hits = response.get("hits", {}).get("hits", [])
+
+            hits = response["hits"]["hits"]
+            self.logger.info(f"📊 Found {len(hits)} documents in {index_name}")
+
             if not hits:
-                self.logger.error(f"在索引 '{index_name}' 中找不到任何文件。")
-                raise FileNotFoundError(f"在索引 '{index_name}' 中找不到任何 Agent 定義。")
+                raise HTTPException(status_code=404, detail=f"No documents found in index {index_name}")
 
-            self.logger.info(f"成功從索引 '{index_name}' 檢索到文件。")
-            return hits[0]["_source"]
+            document = hits[0]["_source"]
+            self.logger.info(f"🔑 Document keys: {list(document.keys())}")
 
-        except Exception as e:
-            self.logger.error(f"從 Elasticsearch 檢索 Agent JSON 時發生錯誤: {e}")
+            # The JSON is stored in 'text' field (not page_content)
+            if "text" in document:
+                text_content = document["text"]
+                self.logger.info(f"📝 Found text field, length: {len(text_content)}")
+                self.logger.info(f"📝 Text content preview: {text_content[:200]}...")
+
+                try:
+                    # Parse the JSON string back to original structure
+                    original_json = json.loads(text_content)
+                    self.logger.info(f"✅ Successfully parsed text as JSON")
+                    self.logger.info(
+                        f"🔑 Original JSON keys: {list(original_json.keys()) if isinstance(original_json, dict) else 'Not a dict'}")
+                    return original_json
+
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"❌ Failed to parse text as JSON: {str(e)}")
+                    raise HTTPException(status_code=500, detail="Stored JSON data is corrupted")
+            else:
+                self.logger.error(f"❌ No 'text' field found. Available fields: {list(document.keys())}")
+                raise HTTPException(status_code=500, detail="Document missing text field")
+
+        except HTTPException:
             raise
+        except Exception as e:
+            self.logger.error(f"❌ Error retrieving agent JSON from Elasticsearch: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve agent JSON: {str(e)}")
 
-    async def get_agent_json_bytes(self, index_name: str = "my_agent_versions") -> bytes:
-        """
-        檢索 Agent 的 JSON 設定，並將其轉換為位元組 (bytes) 格式。
-
-        這是一個方便的函式，用於需要將 JSON 內容作為位元組流處理的場景。
-        :param index_name: 存儲 Agent 設定的索引名稱。
-        :return: 一個包含 UTF-8 編碼的 JSON 內容的位元組字串。
-        :raises Exception: 如果在檢索或轉換過程中發生錯誤。
-        """
+    async def get_agent_json_bytes(self) -> bytes:
+        """Retrieve JSON from Elasticsearch and return as bytes"""
         try:
-            agent_data = await self.get_agent_json(index_name)
+            # Get JSON from Elasticsearch
+            agent_data = await self.get_agent_json()
+
+            # Convert to JSON string and then to bytes
             json_string = json.dumps(agent_data, indent=2, ensure_ascii=False)
             json_bytes = json_string.encode('utf-8')
-            self.logger.info("成功將 Agent JSON 轉換為位元組。")
+
+            self.logger.info("Agent JSON retrieved and converted to bytes")
             return json_bytes
+
         except Exception as e:
-            self.logger.error(f"將 Agent JSON 轉換為位元組時發生錯誤: {e}")
-            raise
+            self.logger.error(f"Error converting agent JSON to bytes: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to get agent JSON bytes: {str(e)}")

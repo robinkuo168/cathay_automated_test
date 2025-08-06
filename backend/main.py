@@ -203,12 +203,14 @@ def get_elasticsearch_service() -> ElasticsearchService:
                     raise
     return _elasticsearch_service
 
+# MODIFICATION: Rewrite get_langflow_service to handle dependency injection
 @lru_cache(maxsize=1)
 def get_langflow_service() -> LangflowService:
     """
     獲取或創建一個執行緒安全的 LangflowService 實例 (工廠函式)。
 
-    使用單例模式和 lru_cache 確保服務只被初始化一次。
+    此函式使用單例模式和 lru_cache 確保服務只被初始化一次。
+    它會自動處理依賴注入，將 ElasticsearchService 實例傳遞給 LangflowService。
     :return: 一個 LangflowService 的實例。
     :raises Exception: 如果服務在初始化過程中失敗。
     """
@@ -217,8 +219,11 @@ def get_langflow_service() -> LangflowService:
         with _langflow_service_lock:
             if _langflow_service is None:
                 try:
-                    _langflow_service = LangflowService()
-                    logger.info("Langflow 服務初始化成功")
+                    # 依賴注入：先獲取 ElasticsearchService 的實例
+                    es_service = get_elasticsearch_service()
+                    # 將依賴傳遞給 LangflowService 的建構函式
+                    _langflow_service = LangflowService(es_service=es_service)
+                    logger.info("Langflow 服務初始化成功 (依賴注入 ElasticsearchService)")
                 except Exception as e:
                     logger.error(f"Langflow 服務初始化失敗: {e}")
                     raise
@@ -298,10 +303,12 @@ async def lifespan(app: FastAPI):
         logger.info(f"已預先加載默認 LLM 模型")
 
         # 初始化並測試 Elasticsearch 服務
+        # 這一行會確保 es_service 實例被創建
         get_elasticsearch_service().test_connection()
         logger.info("Elasticsearch 連線測試成功。")
 
         # 初始化 Langflow 服務並設定流程
+        # get_langflow_service() 現在會自動處理依賴注入
         logger.info("正在初始化 Langflow 流程...")
         langflow_svc = get_langflow_service()
         await langflow_svc.initialize_flow()

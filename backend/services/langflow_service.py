@@ -10,6 +10,9 @@ from fastapi import HTTPException
 import io
 import requests
 
+# Import ElasticsearchService at the top
+from .elasticsearch_service import ElasticsearchService
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -142,12 +145,15 @@ class LangFlowAPIKeyManager:
         return None
 
 class LangflowService:
-    def __init__(self):
+    # MODIFICATION: Update __init__ to accept ElasticsearchService
+    def __init__(self, es_service: ElasticsearchService):
         """
         初始化 LangflowService。
 
         此建構函式會從環境變數讀取 Langflow 的基礎 URL 和專案名稱，
         並初始化一個 `LangFlowAPIKeyManager` 實例來管理 API 金鑰。
+        它還需要一個 ElasticsearchService 實例來從資料庫獲取 Agent Flow。
+        :param es_service: 一個已初始化的 ElasticsearchService 實例。
         :raises ValueError: 如果 `LANGFLOW_BASE_URL` 環境變數未設定。
         """
         self.base_url = os.getenv("LANGFLOW_BASE_URL")
@@ -156,6 +162,8 @@ class LangflowService:
         if not self.base_url:
             raise ValueError("Langflow 的環境變數 LANGFLOW_BASE_URL 未設定！")
 
+        # MODIFICATION: Store the injected ElasticsearchService instance
+        self.es_service = es_service
         self.api_key = None
         self.project_id = None
         self.chat_flow_id = None
@@ -224,6 +232,7 @@ class LangflowService:
                 f"Found {len(flows)} flows. Latest is '{latest_flow.get('name', 'Unknown')}' with ID: {latest_flow['id']}")
             return latest_flow["id"]
 
+    # MODIFICATION: Rewrite initialize_flow to use es_service
     async def initialize_flow(self):
         """
         初始化或刷新 Langflow 服務的總指揮。
@@ -231,7 +240,7 @@ class LangflowService:
         這是一個關鍵的啟動流程，負責確保聊天機器人處於最新的、可運作的狀態。它包含以下步驟：
         1. 確保 API 金鑰已設定且有效。
         2. 獲取專案 ID。
-        3. 刪除專案中最新的流程，以確保狀態乾淨。
+        3. (可選) 刪除專案中最新的流程，以確保狀態乾淨。
         4. 從 Elasticsearch 獲取最新的代理 (Agent) 定義。
         5. 將新的代理定義作為新流程上傳到 Langflow。
         6. 更新服務以使用這個新建立的流程 ID。
@@ -270,12 +279,9 @@ class LangflowService:
 
         # 步驟 4: 從 Elasticsearch 獲取最新的代理定義
         logger.info("🚚 正在從 Elasticsearch 獲取最新的代理定義...")
-        # 這裡的 import 是為了避免模組層級的循環依賴
-        from .elasticsearch_service import ElasticsearchService
         try:
-            es_service = ElasticsearchService()
-            # 注意：您的 ElasticsearchService 需要有 get_agent_json_bytes 方法
-            json_bytes = await es_service.get_agent_json_bytes()
+            # 使用注入的 es_service 實例
+            json_bytes = await self.es_service.get_agent_json_bytes()
         except Exception as e:
             logger.error(f"從 Elasticsearch 獲取代理定義失敗: {e}")
             raise HTTPException(status_code=500, detail="無法從 Elasticsearch 獲取代理定義。")
