@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 import io
 import requests
+from typing import Dict, List, Optional  # Make sure List is imported
 
 # Import ElasticsearchService at the top
 from .elasticsearch_service import ElasticsearchService
@@ -54,6 +55,151 @@ class LangFlowAPIKeyManager:
         with open(self.api_key_file, 'w') as f:
             f.write(api_key)
         logger.info(f"新的 API 金鑰已成功儲存至 '{self.api_key_file}'。")
+
+    async def delete_all_api_keys(self) -> bool:
+        """Delete all existing API keys"""
+        try:
+            logger.info("🗑️ Starting to delete all existing API keys...")
+            
+            # Get list of all API keys
+            api_keys = await self.list_api_keys_data()
+            
+            if not api_keys:
+                logger.info("✅ No API keys found to delete")
+                return True
+            
+            logger.info(f"Found {len(api_keys)} API keys to delete")
+            
+            # Delete each API key
+            deleted_count = 0
+            for key in api_keys:
+                key_id = key.get('id')
+                key_name = key.get('name', 'Unnamed')
+                
+                if key_id:
+                    if await self.delete_api_key(key_id):
+                        logger.info(f"✅ Deleted API key: {key_name} (ID: {key_id})")
+                        deleted_count += 1
+                    else:
+                        logger.error(f"❌ Failed to delete API key: {key_name} (ID: {key_id})")
+                else:
+                    logger.warning(f"⚠️ API key {key_name} has no ID, skipping")
+            
+            logger.info(f"🎯 Successfully deleted {deleted_count} out of {len(api_keys)} API keys")
+            return deleted_count == len(api_keys)
+            
+        except Exception as e:
+            logger.error(f"❌ Error deleting API keys: {str(e)}")
+            return False
+    
+    async def delete_api_key(self, key_id: str) -> bool:
+        """Delete a specific API key by ID"""
+        endpoints_to_try = [
+            f"/api/v1/api_key/{key_id}",
+            f"/api/v1/api_key/{key_id}/",
+            f"/api/v1/api-key/{key_id}",
+            f"/api/v1/api-key/{key_id}/"
+        ]
+        
+        for endpoint in endpoints_to_try:
+            delete_url = f"{self.base_url}{endpoint}"
+            
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.delete(delete_url)
+                    
+                    if response.status_code in [200, 204]:
+                        return True
+                    elif response.status_code == 404:
+                        logger.info(f"  API key {key_id} not found (may already be deleted)")
+                        return True
+                    elif response.status_code != 405:  # Skip method not allowed
+                        logger.warning(f"  Delete failed with status {response.status_code}: {response.text}")
+                        
+            except Exception as e:
+                logger.warning(f"  Error trying endpoint {endpoint}: {str(e)}")
+                continue
+        
+        return False
+    
+    async def list_api_keys_data(self) -> List[Dict]:
+        """List all existing API keys and return data"""
+        endpoints_to_try = [
+            "/api/v1/api_key/",
+            "/api/v1/api_key",
+            "/api/v1/api-key/",
+            "/api/v1/api-key"
+        ]
+        
+        for endpoint in endpoints_to_try:
+            list_url = f"{self.base_url}{endpoint}"
+            
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(list_url)
+                    
+                    if response.status_code == 200:
+                        if response.text.strip():
+                            data = response.json()
+                            
+                            # Handle ApiKeysResponse schema
+                            if isinstance(data, dict) and 'api_keys' in data:
+                                return data['api_keys']
+                            elif isinstance(data, list):
+                                return data
+                            else:
+                                # Try common field names
+                                for field in ['keys', 'data', 'items', 'results']:
+                                    if isinstance(data, dict) and field in data:
+                                        return data[field]
+                                return [data] if isinstance(data, dict) else []
+                        else:
+                            return []
+                            
+            except Exception as e:
+                logger.warning(f"Error listing from {endpoint}: {str(e)}")
+                continue
+        
+        logger.warning("Could not list API keys from any endpoint")
+        return []
+
+    async def setup_single_api_key(self) -> Optional[str]:
+        """
+        Main method: Delete all existing API keys and create a single new one
+        
+        Returns:
+            The new API key or None if failed
+        """
+        try:
+            logger.info("🚀 Setting up single API key...")
+            
+            # Step 1: Delete all existing API keys
+            logger.info("Step 1: Deleting all existing API keys...")
+            if await self.delete_all_api_keys():
+                logger.info("✅ All existing API keys deleted successfully")
+            else:
+                logger.warning("⚠️ Some API keys may not have been deleted")
+            
+            # Step 2: Generate a new API key
+            logger.info("Step 2: Generating new API key...")
+            new_api_key = await self.generate_api_key("main-chatbot-key")
+            
+            if new_api_key:
+                # Step 3: Test the new API key
+                logger.info("Step 3: Testing new API key...")
+                if await self.test_api_key(new_api_key):
+                    logger.info("🎉 Single API key setup completed successfully!")
+                    return new_api_key
+                else:
+                    logger.error("❌ New API key failed testing")
+                    return None
+            else:
+                logger.error("❌ Failed to generate new API key")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error in setup_single_api_key: {str(e)}")
+            return None
 
     async def generate_api_key(self, key_name: Optional[str] = None) -> Optional[str]:
         """
@@ -112,14 +258,7 @@ class LangFlowAPIKeyManager:
 
     async def setup_api_key(self) -> Optional[str]:
         """
-        設定 API 金鑰的核心流程。
-
-        這是一個協調函式，它會依序執行以下操作：
-        1. 嘗試從本地檔案載入現有的金鑰。
-        2. 如果找到，則測試其有效性。
-        3. 如果現有金鑰無效或不存在，則呼叫 API 產生一個新的金鑰。
-        4. 測試新產生的金鑰，如果有效，則將其儲存到本地檔案。
-        :return: 一個有效的 API 金鑰字串，如果所有步驟都失敗則返回 None。
+        設定 API 金鑰的核心流程 - 使用新的清理策略
         """
         logger.info("🚀 正在設定 API 金鑰...")
 
@@ -131,12 +270,11 @@ class LangFlowAPIKeyManager:
             logger.info("🎉 使用現有的有效 API 金鑰。")
             return existing_key
 
-        # 步驟 3: 如果沒有金鑰或金鑰已失效，則產生一個新的
-        logger.info("找不到有效的現有金鑰，正在產生新的金鑰...")
-        new_api_key = await self.generate_api_key("main-chatbot-key")
+        # 步驟 3: 如果沒有金鑰或金鑰已失效，則使用清理策略產生新的
+        logger.info("找不到有效的現有金鑰，正在使用清理策略產生新的金鑰...")
+        new_api_key = await self.setup_single_api_key()
 
-        # 步驟 4: 測試新產生的金鑰並儲存
-        if new_api_key and await self.test_api_key(new_api_key):
+        if new_api_key:
             self.save_api_key(new_api_key)
             logger.info("🎉 新的 API 金鑰設定完成！")
             return new_api_key
@@ -156,8 +294,8 @@ class LangflowService:
         :param es_service: 一個已初始化的 ElasticsearchService 實例。
         :raises ValueError: 如果 `LANGFLOW_BASE_URL` 環境變數未設定。
         """
-        self.base_url = os.getenv("LANGFLOW_BASE_URL")
-        self.project_name = os.getenv("LANGFLOW_PROJECT_NAME")
+        self.base_url = os.getenv("LANGFLOW_BASE_URL","https://langflow-chatbot.1xww0crhz5k4.jp-tok.codeengine.appdomain.cloud")
+        self.project_name = os.getenv("LANGFLOW_PROJECT_NAME","Starter Project")
 
         if not self.base_url:
             raise ValueError("Langflow 的環境變數 LANGFLOW_BASE_URL 未設定！")
@@ -168,19 +306,8 @@ class LangflowService:
         self.project_id = None
         self.chat_flow_id = None
         self.api_key_manager = LangFlowAPIKeyManager(self.base_url)
-
-    async def setup_api_key(self) -> bool:
-        """
-        一個方便的包裝函式，用於執行 API 金鑰的設定流程。
-
-        :return: 如果成功設定了有效的 API 金鑰，返回 True，否則返回 False。
-        """
-        api_key = await self.api_key_manager.setup_api_key()
-        if api_key:
-            self.api_key = api_key
-            return True
-        return False
-
+    
+    '''
     async def get_project_id(self) -> str:
         """
         從 Langflow API 獲取目標專案的 ID。
@@ -206,6 +333,52 @@ class LangflowService:
 
             logger.info(f"Using project: {project['name']} (ID: {project['id']})")
             return project["id"]
+'''
+
+    async def get_project_id(self) -> str:
+        """Fetch project ID from Langflow API"""
+        try:
+            url = f"{self.base_url}/api/v1/projects/"
+            
+            headers = {
+                "accept": "application/json",
+                "x-api-key": self.api_key
+            }
+            
+            logger.info("Fetching project ID from Langflow...")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=headers)
+                
+                if response.status_code != 200:
+                    logger.error(f"Failed to fetch projects: {response.status_code} - {response.text}")
+                    raise HTTPException(status_code=500, detail="Failed to fetch project ID")
+                
+                projects = response.json()
+                logger.info(f"Available projects: {json.dumps(projects, indent=2)}")
+                
+                if not projects:
+                    raise HTTPException(status_code=404, detail="No projects found")
+                
+                # Find project by name or use first project
+                if self.project_name:
+                    project = next((p for p in projects if p["name"] == self.project_name), None)
+                    if not project:
+                        logger.warning(f"Project '{self.project_name}' not found, using first project")
+                        project = projects[0]
+                else:
+                    project = projects[0]
+                
+                project_id = project["id"]
+                logger.info(f"Using project: {project['name']} (ID: {project_id})")
+                return project_id
+                
+        except httpx.TimeoutException:
+            logger.error("Timeout while fetching project ID")
+            raise HTTPException(status_code=504, detail="Timeout fetching project ID")
+        except httpx.RequestError as e:
+            logger.error(f"Request error while fetching project ID: {str(e)}")
+            raise HTTPException(status_code=500, detail="Network error fetching project ID")
 
     async def get_latest_flow_id(self) -> Optional[str]:
         """
@@ -235,7 +408,7 @@ class LangflowService:
     # MODIFICATION: Rewrite initialize_flow to use es_service
     async def initialize_flow(self):
         """
-        初始化或刷新 Langflow 服務的總指揮。
+        初始化或刷新 Langflow 服務的總指令。
 
         這是一個關鍵的啟動流程，負責確保聊天機器人處於最新的、可運作的狀態。它包含以下步驟：
         1. 確保 API 金鑰已設定且有效。
@@ -248,20 +421,24 @@ class LangflowService:
         """
         logger.info("🔧 正在初始化或刷新 Langflow 流程...")
 
-        # 步驟 1: 確保 API 金鑰已設定且有效
-        if not self.api_key:
-            logger.info("API 金鑰未設定，正在執行設定程序...")
-            if not await self.setup_api_key():
+        # 步驟 0: 首先設定 API 金鑰 (CRITICAL: This must come first!)
+        logger.info("步驟 0: 設定 API 金鑰...")
+        if not self.api_key or not await self.api_key_manager.test_api_key(self.api_key):
+            logger.info("API 金鑰未設定或無效，正在設定新的...")
+            new_api_key = await self.api_key_manager.setup_single_api_key()
+            if not new_api_key:
                 raise Exception("致命錯誤：無法設定 Langflow API 金鑰。")
+            self.api_key = new_api_key
+            logger.info("✅ API 金鑰設定成功")
         else:
-            logger.info("✅ 服務已有 API 金鑰。")
+            logger.info("✅ 現有 API 金鑰有效")
 
-        # 步驟 2: 獲取專案 ID
+        # 步驟 1: 獲取專案 ID (NOW this comes after API key setup)
         if not self.project_id:
             self.project_id = await self.get_project_id()
             logger.info(f"✅ 專案 ID 已設定為: {self.project_id}")
 
-        # 步驟 3: 刪除最新的流程以確保狀態乾淨
+        # 步驟 2: 刪除最新的流程以確保狀態乾淨
         try:
             most_recent_flow_id = await self.get_latest_flow_id()
             if most_recent_flow_id:
@@ -277,7 +454,7 @@ class LangflowService:
         except Exception as e:
             logger.error(f"刪除流程時發生未預期錯誤，但仍將繼續執行: {e}")
 
-        # 步驟 4: 從 Elasticsearch 獲取最新的代理定義
+        # 步驟 3: 從 Elasticsearch 獲取最新的代理定義
         logger.info("🚚 正在從 Elasticsearch 獲取最新的代理定義...")
         try:
             # 使用注入的 es_service 實例
@@ -286,17 +463,17 @@ class LangflowService:
             logger.error(f"從 Elasticsearch 獲取代理定義失敗: {e}")
             raise HTTPException(status_code=500, detail="無法從 Elasticsearch 獲取代理定義。")
 
-        # 步驟 5: 將新的代理版本作為新流程上傳
+        # 步驟 4: 將新的代理版本作為新流程上傳
         logger.info("📤 正在將新的代理流程上傳至 Langflow...")
         await self.upload_flow_from_bytes(json_bytes)
 
-        # 步驟 6: 獲取新上傳流程的 ID
+        # 步驟 5: 獲取新上傳流程的 ID
         logger.info("🔍 正在檢索新上傳流程的 ID...")
         latest_flow_id = await self.get_latest_flow_id()
         if not latest_flow_id:
             raise Exception("致命錯誤：上傳後無法獲取流程 ID，聊天機器人將無法工作。")
 
-        # 步驟 7: 更新服務以使用新的流程 ID
+        # 步驟 6: 更新服務以使用新的流程 ID
         await self.update_flow_id(latest_flow_id)
         logger.info(f"🎉 流程初始化完成。服務現在使用流程 ID: {self.chat_flow_id}")
 

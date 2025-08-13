@@ -232,7 +232,7 @@ async function uploadFiles() {
         selectedFiles.forEach(file => {
             formData.append('files', file);
         });
-        formData.append('indexName', indexName);
+        formData.append('index_name', indexName);
         formData.append('deleteExisting', deleteExisting);
         formData.append('indexType', elements.indexTypeSelect.value); // Send index type for validation
 

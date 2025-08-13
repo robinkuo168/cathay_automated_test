@@ -38,13 +38,13 @@ class ElasticsearchService:
         self.logger = get_logger(__name__)
 
         # 從環境變數讀取 Elasticsearch 設定
-        ES_HOST = os.getenv("ES_HOST")
+        ES_HOST = os.getenv("ES_HOST","cf71a778-84e3-4c36-b908-512019fa056b.bqfh4fpt0vhjh7rs4ot0.databases.appdomain.cloud")
         ES_PORT = int(os.getenv("ES_PORT", 31041))
-        ES_USERNAME = os.getenv("ES_USERNAME")
-        ES_PASSWORD = os.getenv("ES_PASSWORD")
+        ES_USERNAME = os.getenv("ES_USERNAME","ibm_cloud_de26a48c_31a5_40b8_b5fa_4bce966b6af1")
+        ES_PASSWORD = os.getenv("ES_PASSWORD", "XiYKd7a2b4XvD6pjb7e8EZfTfhwUzReH")
 
         # 1. 獲取憑證的相對路徑
-        relative_cert_path = os.getenv("ES_CERT_PATH")
+        relative_cert_path = os.getenv("ES_CERT_PATH", "C:\\Users\\Henry Chu\\OneDrive\\Desktop\\AI Project\\Data Entry Platform - Copy\\20accfbb-5bcd-4edc-aacf-ca14822b8b02")
 
         if not all([ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD, relative_cert_path]):
             raise ValueError("Elasticsearch 的環境變數未完整設定！")
@@ -85,8 +85,8 @@ class ElasticsearchService:
         self.embeddings = WatsonxEmbeddings(
             model_id=embedding_model,
             url=os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
-            apikey=os.getenv("WATSONX_API_KEY"),
-            project_id=os.getenv("WATSONX_PROJECT_ID"),
+            apikey=os.getenv("WATSONX_API_KEY","JxsGnk03edo6N6XN0mCYkkb-Mf6ACOn608JCYR0eNCZe"),
+            project_id=os.getenv("WATSONX_PROJECT_ID","01c9dc60-0b88-4b26-ba1e-624820af527b"),
             params=params
         )
 

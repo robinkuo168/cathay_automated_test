@@ -1585,71 +1585,340 @@ async def get_task_status(task_id: str):
         return {"status": "processing", "message": "Task initializing..."}
     return task
 
+# Replace the existing ES endpoints in main.py with these:
+
+# Index type configurations (add this near the top after imports)
+INDEX_TYPE_CONFIGS = {
+    "documents": {
+        "index_name": "cathay_project1_chunks",
+        "allowed_extensions": [".txt", ".xlsx", ".xls", ".yaml", ".yml"],
+        "description": "Normal Documents (TXT, XLSX, YAML)"
+    },
+    "agent": {
+        "index_name": "my_agent_versions",
+        "allowed_extensions": [".json"],
+        "description": "Agent Versions (JSON)"
+    }
+}
+
+def validate_files_for_index_type(files: List[UploadFile], index_type: str) -> tuple[bool, str]:
+    """
+    Validate uploaded files against the selected index type.
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if index_type not in INDEX_TYPE_CONFIGS:
+        return False, f"Invalid index type: {index_type}"
+    
+    config = INDEX_TYPE_CONFIGS[index_type]
+    allowed_extensions = config["allowed_extensions"]
+    
+    invalid_files = []
+    for file in files:
+        if not file.filename:
+            continue
+            
+        file_extension = "." + file.filename.split(".")[-1].lower()
+        if file_extension not in allowed_extensions:
+            invalid_files.append(f"{file.filename} ({file_extension})")
+    
+    if invalid_files:
+        allowed_str = ", ".join(allowed_extensions)
+        return False, f"Files not compatible with {config['description']}: {', '.join(invalid_files)}. Only {allowed_str} files are allowed for this index type."
+    
+    return True, ""
+
+# Replace the existing /api/es/upload endpoint
 @app.post("/api/es/upload")
-async def es_upload_files(files: List[UploadFile] = File(...),
+async def upload_files(
+    request: Request,
+    files: List[UploadFile] = File(...),
     index_name: str = Form(default="cathay_project1_chunks"),
-    deleteExisting: str = Form(default="false")
+    deleteExisting: str = Form(default="false"),
+    check_duplicates: bool = Form(default=True),
+    indexType: str = Form(default="documents")
 ):
-    """
-    上傳多個檔案至 Elasticsearch 並進行索引的 API 端點 (`/api/es/upload`)。
-
-    此端點會接收檔案，將其分割成塊 (chunks)，生成向量嵌入，然後存入指定的 Elasticsearch 索引。
-    :param files: 一個從表單中獲取的 UploadFile 物件列表。
-    :param index_name: 目標 Elasticsearch 索引的名稱。
-    :param deleteExisting: 是否在上传前刪除已存在的同名索引。
-    :return: 一個包含操作結果的標準 API 響應。
-    :raises HTTPException(500): 如果在處理過程中發生錯誤。
-    """
-    uploader = get_elasticsearch_service()
-    delete_existing = deleteExisting.lower() in ('true', '1', 'yes')
-    temp_files = []
+    delete_existing = deleteExisting.lower() in ('true', '1', 'yes', 'on')
+    
+    print(f"🔍 UPLOAD REQUEST DEBUG:")
+    print(f"  Index Type: {indexType}")
+    print(f"  Files: {[f.filename for f in files]}")
+    print(f"  Delete Existing: {delete_existing}")
+    
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            for file in files:
-                temp_path = os.path.join(temp_dir, file.filename)
-                with open(temp_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
-                temp_files.append(temp_path)
-
-            success = uploader.upload_multiple_files(
-                file_paths=temp_files,
-                index_name=index_name,
-                delete_existing=delete_existing
-            )
-            stats = uploader.client.count(index=index_name)
-            return create_response(
-                success=success,
-                message=f"處理了 {len(temp_files)} 個檔案",
-                data={"total_docs_in_index": stats.get('count', 'N/A')}
-            )
+        if not files or len(files) == 0:
+            raise HTTPException(status_code=400, detail="No files provided")
+        
+        # Validate index type and get configuration
+        if indexType not in INDEX_TYPE_CONFIGS:
+            raise HTTPException(status_code=400, detail=f"Invalid index type: {indexType}")
+        
+        config = INDEX_TYPE_CONFIGS[indexType]
+        actual_index_name = config["index_name"]
+        
+        print(f"📝 Using index: {actual_index_name}")
+        
+        # Validate files against index type
+        is_valid, error_message = validate_files_for_index_type(files, indexType)
+        if not is_valid:
+            print(f"❌ File validation failed: {error_message}")
+            raise HTTPException(status_code=400, detail=error_message)
+        
+        print("✅ File validation passed")
+        
+        # Create temp directory
+        temp_dir = Path("temp")
+        temp_dir.mkdir(exist_ok=True)
+        
+        temp_files = []
+        uploaded_count = 0
+        
+        # Save uploaded files temporarily with better error handling
+        for file in files:
+            if not file.filename:
+                continue
+                
+            print(f"💾 Processing file: {file.filename}")
+            
+            # Read file content
+            content = await file.read()
+            print(f"📊 File size: {len(content)} bytes")
+            
+            # For JSON files, validate JSON structure
+            if indexType == "agent" and file.filename.endswith('.json'):
+                try:
+                    # Validate JSON structure
+                    import json
+                    json_content = content.decode('utf-8')
+                    parsed_json = json.loads(json_content)
+                    print(f"✅ Valid JSON structure with keys: {list(parsed_json.keys()) if isinstance(parsed_json, dict) else 'Not a dict'}")
+                except json.JSONDecodeError as e:
+                    print(f"❌ Invalid JSON in {file.filename}: {str(e)}")
+                    raise HTTPException(status_code=400, detail=f"Invalid JSON in {file.filename}: {str(e)}")
+                except UnicodeDecodeError as e:
+                    print(f"❌ Encoding error in {file.filename}: {str(e)}")
+                    raise HTTPException(status_code=400, detail=f"File encoding error in {file.filename}: {str(e)}")
+            
+            # Create safe filename
+            safe_filename = file.filename
+            # Only sanitize if there are problematic characters
+            if not all(c.isalnum() or c in '._-' for c in file.filename):
+                safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
+                if not safe_filename.endswith('.json'):
+                    safe_filename += '.json'
+                print(f"📝 Sanitized filename: {file.filename} -> {safe_filename}")
+            
+            temp_path = temp_dir / safe_filename
+            
+            # Save file
+            with open(temp_path, "wb") as buffer:
+                buffer.write(content)
+            
+            temp_files.append(str(temp_path))
+            uploaded_count += 1
+            print(f"💾 Saved: {temp_path}")
+        
+        if not temp_files:
+            raise HTTPException(status_code=400, detail="No files were saved successfully")
+        
+        print(f"✅ {uploaded_count} files saved temporarily")
+        
+        # Get elasticsearch service with connection test
+        print("🔌 Testing Elasticsearch connection...")
+        uploader = get_elasticsearch_service()
+        
+        # Test connection explicitly
+        try:
+            uploader.test_connection()
+            print("✅ Elasticsearch connection successful")
+        except Exception as e:
+            print(f"❌ Elasticsearch connection failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Elasticsearch connection failed: {str(e)}")
+        
+        # Upload to Elasticsearch with detailed logging
+        print(f"🚀 Starting upload to index: {actual_index_name}")
+        print(f"🗑️ Delete existing: {delete_existing}")
+        print(f"🔍 Check duplicates: {check_duplicates}")
+        
+        success = uploader.upload_multiple_files(
+            file_paths=temp_files,
+            index_name=actual_index_name,
+            delete_existing=delete_existing,
+            check_duplicates=check_duplicates
+        )
+        
+        print(f"📤 Upload result: {success}")
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Upload to Elasticsearch failed - check server logs for details")
+        
+        # Get index stats for verification
+        try:
+            stats = uploader.client.count(index=actual_index_name)
+            total_docs = stats['count']
+            print(f"📊 Total documents in index '{actual_index_name}': {total_docs}")
+        except Exception as e:
+            print(f"⚠️ Could not get index stats: {str(e)}")
+            total_docs = "unknown"
+        
+        # Verify documents were actually uploaded
+        if indexType == "agent":
+            try:
+                # Try to search for the uploaded document
+                search_result = uploader.client.search(
+                    index=actual_index_name,
+                    body={"query": {"match_all": {}}, "size": 1}
+                )
+                print(f"🔍 Verification search found {search_result['hits']['total']['value']} documents")
+            except Exception as e:
+                print(f"⚠️ Could not verify upload: {str(e)}")
+        
+        file_type_desc = "Agent版本" if indexType == "agent" else "一般檔案"
+        
+        response_data = {
+            "success": success,
+            "message": f"Successfully processed {uploaded_count} {file_type_desc} files",
+            "files_processed": uploaded_count,
+            "index_name": actual_index_name,
+            "index_type": indexType,
+            "total_documents_in_index": total_docs
+        }
+        
+        print(f"📤 Final response: {response_data}")
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        print(f"❌ Upload error: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Upload failed: {error_msg}")
+        
+    finally:
+        # Clean up temporary files
+        cleaned_files = 0
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    cleaned_files += 1
+            except Exception as e:
+                print(f"⚠️ Failed to clean up {temp_file}: {e}")
+        
+        if cleaned_files > 0:
+            print(f"🗑️ Cleaned up {cleaned_files} temporary files")
 
+# Replace the existing /api/es/search endpoint
 @app.post("/api/es/search")
-async def es_search_documents( query: str = Form(...),
+async def search_documents(
+    query: str = Form(...),
     index_name: str = Form(default="cathay_project1_chunks"),
-    k: int = Form(default=5)
+    k: int = Form(default=5, description="Number of results to return")
 ):
     """
-    在 Elasticsearch 中執行向量相似度搜尋的 API 端點 (`/api/es/search`)。
-    :param query: 使用者的自然語言查詢。
-    :param index_name: 要搜尋的目標索引名稱。
-    :param k: 要返回的最相似結果數量。
-    :return: 一個包含搜尋結果列表的標準 API 響應。
-    :raises HTTPException(500): 如果在搜尋過程中發生錯誤。
+    Search documents using vector similarity
+    
+    - **query**: Search query text
+    - **index_name**: Elasticsearch index to search
+    - **k**: Number of results to return (default: 5)
     """
-
-    uploader = get_elasticsearch_service()
     try:
+        uploader = get_elasticsearch_service()
         results = uploader.search_with_score(query, index_name, k)
-        search_results = [{
-            "content": doc.page_content,
-            "metadata": doc.metadata,
-            "score": float(score)
-        } for doc, score in results]
-        return create_response(success=True, message="搜尋成功", data={"results": search_results})
+        
+        search_results = []
+        for doc, score in results:
+            search_results.append({
+                "content": doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content,
+                "full_content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": float(score)
+            })
+        
+        return JSONResponse(content={
+            "success": True,
+            "query": query,
+            "index_name": index_name,
+            "results_count": len(search_results),
+            "results": search_results
+        })
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        print(f"❌ Search error: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {error_msg}")
+
+# Add these new endpoints that are in simple_server but not in main.py
+@app.get("/api/es/indices")
+async def list_indices():
+    """List all Elasticsearch indices"""
+    try:
+        uploader = get_elasticsearch_service()
+        indices = uploader.client.indices.get_alias(index="*")
+        index_list = []
+        
+        for index_name in indices.keys():
+            try:
+                stats = uploader.client.count(index=index_name)
+                doc_count = stats['count']
+            except Exception:
+                doc_count = 0
+                
+            index_list.append({
+                "name": index_name,
+                "document_count": doc_count
+            })
+        
+        return JSONResponse(content={
+            "success": True,
+            "indices": index_list
+        })
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error listing indices: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to list indices: {error_msg}")
+
+@app.delete("/api/es/indices/{index_name}")
+async def delete_index(index_name: str):
+    """Delete an entire Elasticsearch index"""
+    try:
+        uploader = get_elasticsearch_service()
+        if uploader.client.indices.exists(index=index_name):
+            uploader.client.indices.delete(index=index_name)
+            return JSONResponse(content={
+                "success": True,
+                "message": f"Index '{index_name}' deleted successfully"
+            })
+        else:
+            raise HTTPException(status_code=404, detail=f"Index '{index_name}' not found")
+            
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error deleting index: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete index: {error_msg}")
+
+@app.delete("/api/es/indices/{index_name}/documents")
+async def clear_index(index_name: str):
+    """Clear all documents from an index (but keep the index)"""
+    try:
+        uploader = get_elasticsearch_service()
+        success = uploader.delete_all_documents(index_name)
+        if success:
+            return JSONResponse(content={
+                "success": True,
+                "message": f"All documents deleted from index '{index_name}'"
+            })
+        else:
+            raise HTTPException(status_code=500, detail="Failed to clear index")
+            
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error clearing index: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear index: {error_msg}")
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(chat_message: ChatMessage):
